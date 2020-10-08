@@ -66,5 +66,5 @@ def service_connection(key, mask):
         if not recv_data or data.recv_total == data.msg_total:
             print(f"Closing connection with {data.connid}")
 
-
+TEST
 conn_single()
