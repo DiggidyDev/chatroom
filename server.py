@@ -6,7 +6,7 @@ PORT = 65501
 HOST = "127.0.0.1"
 
 
-def accept_wrapper(sock: socket.socket, sel: selectors.DefaultSelector):
+def accept_wrapper(sock, sel: selectors.DefaultSelector):
     # Accept the incoming connection
     conn, addr = sock.accept()
     print(f"Connection successfully made from {addr}")
@@ -32,9 +32,11 @@ def conn_multi():
 
     while True:
         events = sel.select(timeout=None)
-        for k, m in events:
+        for k, mask in events:
             if not k.data:
-                accept_wrapper(k.fileobj)
+                accept_wrapper(k.fileobj, sel)
+            else:
+                service_connection(k, mask, sel)
 
 
 def conn_single():
@@ -55,16 +57,29 @@ def conn_single():
                 conn.sendall(f"Hello {addr[0]}!".encode("utf-8"))
 
 
-def service_connection(key, mask):
+def service_connection(key, mask, sel: selectors.DefaultSelector):
     sock = key.fileobj
     data = key.data
+
+    # Incoming data
     if mask & selectors.EVENT_READ:
         recv_data = sock.recv(1024)
         if recv_data:
             print(f"Received {repr(recv_data)} from {data.connid}")
             data.recv_total += len(recv_data)
+
+        # Client's socket closed, so we do as well
         if not recv_data or data.recv_total == data.msg_total:
             print(f"Closing connection with {data.connid}")
+            sel.unregister(sock)  # No longer monitored by the selector
+            sock.close()
 
-YES
+    # Outgoing data
+    if mask & selectors.EVENT_WRITE:
+        if data.outb:
+            print(f"Echoing {repr(data.outb)} to {data.connid}")
+            sent = sock.send(data.outb)  # Returns the number of bytes sent
+            data.outb = data.outb[sent:]  # Remove bytes from send buffer
+
+
 conn_single()
