@@ -64,7 +64,7 @@ def service_connection(key, mask):
             print(f"Received {repr(recv_data)} from {data.connid}")
             data.recv_total += len(recv_data)
         if not recv_data or data.recv_total == data.msg_total:
-            print(f"Closing connection with {data.connid}a")
+            print(f"Closing connection with {data.connid}")
 
 
 conn_single()
