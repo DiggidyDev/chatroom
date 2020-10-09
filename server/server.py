@@ -16,11 +16,11 @@ class Server:
         self.port = port
         self.conn = (host, port)
 
-    @debug(verbosity=1)
+    @debug(verbosity=2)
     def accept_wrapper(self, sock, sel: selectors.DefaultSelector):
         # Accept the incoming connection
         conn, addr = sock.accept()
-        print(f"Connection successfully made from {addr}")
+        print(f"Connection successfully made from {':'.join(str(i) for i in addr)}")
         conn.setblocking(False)
         data = types.SimpleNamespace(addr=addr, inb=b"", outb=b"")
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
