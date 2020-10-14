@@ -1,7 +1,9 @@
+import pickle
 import socket
 
 from user import User
 from utils.debug import debug
+
 
 PORT = 65501
 HOST = "127.0.0.1"
@@ -13,10 +15,33 @@ u = User("Nickname")
 def connect():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
-        s.sendall(f"Hello from {u}".encode("utf-8"))
-        data = s.recv(1024)
+        initialcontent = {"content": "Initial connection.", "user": u}
+        s.sendall(pickle.dumps(initialcontent))
+        while True:
+            data = pickle.loads(s.recv(1024))
+            print(f"Received: {pickle.loads(data)}")
 
-        print(f"Received: {data.decode('utf-8')}")
+            # Wait for user to enter their message
+            message = input("CMD> ")
+            tosend = format_content(content=message, user=u)
+            if tosend:
+                s.sendall(pickle.dumps(tosend))
+
+#@debug(verbose=False)
+def format_content(**kwargs):
+    """
+    Correctly format content for outgoing
+    :param kwargs:
+    :return:
+    """
+    struct = {
+        "content": kwargs["content"],
+        "user": kwargs["user"]
+    }
+
+    return struct
 
 
-connect()
+
+if __name__ == "__main__":
+    connect()
