@@ -20,7 +20,7 @@ class User:
         self.username = None
 
         self._status = Activity.ONLINE
-        self._UUID = self._generate_new_uuid()
+        self._UUID = 0
 
     def __str__(self):
         return self.username if not self.nickname else self.nickname
@@ -28,15 +28,29 @@ class User:
     def __int__(self):
         return len(self.friends)
 
-    @staticmethod
-    def _generate_new_uuid() -> int:
-        return 5
+    # TODO: FIX UUID GENERATION - EDIT CURRENT INSTANCE'S UUID
+    def _generate_new_uuid(self):
+        if isinstance(self._UUID, int):
+            self._UUID += 1
+        else:
+            print("yes")
+            self._UUID = 1
+        return self
 
     def get_mutual_friends(self, user) -> list:
         pass
 
     def get_status(self):
         return self._status
+
+    def get_uuid(self) -> int:
+        """
+        :return - Unique User Identification:
+        """
+        return self._UUID
+
+    def is_anonymous(self) -> bool:
+        pass
 
     def is_blocked(self, user) -> None:
         return
