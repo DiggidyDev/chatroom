@@ -24,6 +24,10 @@ Hopefully it will allow us to communicate with eachother in dire times and expre
           - Marry/kiss/kill user
             - Marrying results in merged names
         - GIFs (MAYBE)
+     - Anonymous sign-in:
+        - Generate temporary UUID
+        - Only allowed to join invite-only games
+        - Account required for adding friends and directly messaging
 
 2. Games:
     - Games:
