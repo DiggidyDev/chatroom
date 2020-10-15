@@ -2,7 +2,9 @@ import pickle
 import selectors
 import socket
 import types
+from concurrent.futures import ThreadPoolExecutor
 
+from ui.cnslserver import ConsoleWindow
 from utils.debug import debug
 
 PORT = 65501
@@ -78,9 +80,8 @@ class Server:
         if mask & selectors.EVENT_READ:
             recv_data = sock.recv(1024)
             if recv_data:
-                from client.client import format_content
-                recv_data = pickle.dumps(format_content(content=pickle.loads(recv_data)['content'], user=pickle.loads(recv_data)['user']._generate_new_uuid()))
-                print(f"RECV: {pickle.loads(recv_data)['content']} from {pickle.loads(recv_data)['user'].get_uuid()}")
+                sender = pickle.loads(recv_data)["user"]
+                print(f"RECV: {pickle.loads(recv_data)['content']} from {sender.get_uuid()} - {sender.nickname}")
                 data.outb += recv_data
 
             # Client's socket closed, so we do as well
@@ -98,4 +99,18 @@ class Server:
 
 
 server = Server(HOST, PORT)
-server.conn_multi()
+
+
+def startConsole():
+    import sys
+    from PyQt5 import QtWidgets
+
+    app = QtWidgets.QApplication(sys.argv)
+    ConsoleWindow()
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    with ThreadPoolExecutor(max_workers=2) as t:
+        t.submit(server.conn_multi)
+        t.submit(startConsole)
