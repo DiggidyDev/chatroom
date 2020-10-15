@@ -8,7 +8,7 @@ from utils.debug import debug
 PORT = 65501
 HOST = "127.0.0.1"
 
-u = User("Nickname")
+u = User(input("Enter your nickname: "))
 
 
 @debug(verbose=True)
@@ -19,7 +19,7 @@ def connect():
         s.sendall(pickle.dumps(initialcontent))
         while True:
             data = pickle.loads(s.recv(1024))
-            print(f"Received: {pickle.loads(data)}")
+            print(f"RECV: {pickle.loads(data)}")
 
             # Wait for user to enter their message
             message = input("CMD> ")
@@ -27,7 +27,8 @@ def connect():
             if tosend:
                 s.sendall(pickle.dumps(tosend))
 
-#@debug(verbose=False)
+
+# @debug(verbose=False)
 def format_content(**kwargs):
     """
     Correctly format content for outgoing
