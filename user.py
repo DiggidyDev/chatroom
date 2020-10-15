@@ -1,4 +1,6 @@
 import enum
+import uuid
+from secrets import token_bytes
 
 from utils.debug import debug
 
@@ -7,12 +9,10 @@ class Activity(enum.Enum):
     ONLINE = "online"
 
 
-print(Activity.ONLINE)
-
-
 class User:
 
     def __init__(self, nickname: str = None):
+        self.anonymous = True
         self.blocked_users = []
         self.friends = []
         self.nickname = nickname
@@ -20,7 +20,7 @@ class User:
         self.username = None
 
         self._status = Activity.ONLINE
-        self._UUID = 0
+        self._UUID = uuid.UUID(bytes=token_bytes(16))
 
     def __str__(self):
         return self.username if not self.nickname else self.nickname
@@ -28,29 +28,20 @@ class User:
     def __int__(self):
         return len(self.friends)
 
-    # TODO: FIX UUID GENERATION - EDIT CURRENT INSTANCE'S UUID
-    def _generate_new_uuid(self):
-        if isinstance(self._UUID, int):
-            self._UUID += 1
-        else:
-            print("yes")
-            self._UUID = 1
-        return self
-
     def get_mutual_friends(self, user) -> list:
         pass
 
     def get_status(self):
         return self._status
 
-    def get_uuid(self) -> int:
+    def get_uuid(self) -> uuid.UUID:
         """
-        :return - Unique User Identification:
+        :return - Universally unique Identifier:
         """
         return self._UUID
 
     def is_anonymous(self) -> bool:
-        pass
+        return self.anonymous
 
     def is_blocked(self, user) -> None:
         return
