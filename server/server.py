@@ -24,6 +24,9 @@ class Server:
         # Accept the incoming connection
         conn, addr = sock.accept()
         print(f"Connection successfully made from {':'.join(str(i) for i in addr)}")
+
+        self.clients.append(conn)
+
         conn.setblocking(False)
         data = types.SimpleNamespace(addr=addr, inb=b"", outb=b"")
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
@@ -43,15 +46,16 @@ class Server:
 
         # Socket registration
         sel.register(lsock, selectors.EVENT_READ, data=None)
-
         while True:
             events = sel.select(timeout=None)
             for k, mask in events:
+
                 if not k.data:
                     self.accept_wrapper(k.fileobj, sel)
                 else:
                     self.service_connection(k, mask, sel)
 
+    @debug(verbose=True)
     def conn_single(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((HOST, PORT))
@@ -62,7 +66,7 @@ class Server:
             with conn:
                 print(f"Connection made from {addr}")
                 while True:
-                    data = conn.recv(1024)
+                    data = conn.recv(4096)
 
                     if not data:
                         break
@@ -78,7 +82,12 @@ class Server:
 
         # Incoming data
         if mask & selectors.EVENT_READ:
-            recv_data = sock.recv(1024)
+            recv_data = None
+            try:
+                recv_data = sock.recv(4096)
+            except ConnectionResetError:
+                print(f"CONNECTION CLOSED >> CATCHING ERROR")
+
             if recv_data:
                 sender = pickle.loads(recv_data)["user"]
                 print(f"RECV: {pickle.loads(recv_data)['content']} from {sender.get_uuid()} - {sender.nickname}")
@@ -89,12 +98,14 @@ class Server:
                 print(f"Closing connection with {data.addr}")
                 sel.unregister(sock)  # No longer monitored by the selector
                 sock.close()
+                self.clients.remove(sock)
 
         # Outgoing data
         if mask & selectors.EVENT_WRITE:
             if data.outb:
-                print(f"ECHO: {pickle.loads(data.outb)} to {data.addr}")
-                sent = sock.send(pickle.dumps(data.outb))  # Returns the number of bytes sent
+                for sock in self.clients:
+                    print(f"ECHO: {pickle.loads(data.outb)} to {data.addr}")
+                    sent = sock.send(pickle.dumps(data.outb))  # Returns the number of bytes sent
                 data.outb = data.outb[sent:]  # Remove bytes from send buffer
 
 
@@ -111,6 +122,6 @@ def startConsole():
 
 
 if __name__ == "__main__":
-    with ThreadPoolExecutor(max_workers=2) as t:
-        t.submit(server.conn_multi)
-        t.submit(startConsole)
+    server.conn_multi()
+
+
