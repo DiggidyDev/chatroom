@@ -57,6 +57,7 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
 
             initialcontent = {
                 "content": "Initial connection.",
+                "system-message": True,
                 "user": self.u
             }
 
@@ -77,6 +78,7 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
         """
         struct = {
             "content": kwargs["content"],
+            "system-message": kwargs["system_message"],
             "user": kwargs["user"]
         }
 
@@ -144,7 +146,7 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
         QtCore.QMetaObject.connectSlotsByName(self)
 
     def send_message(self, content):
-        tosend = self.format_content(content=content, user=self.u)
+        tosend = self.format_content(content=content, system_message=False, user=self.u)
         print(tosend)
         self.socket.sendall(pickle.dumps(tosend))
 
@@ -166,7 +168,12 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
 
         currentTime = datetime.datetime.now()
 
-        item.setText(f"{sender} - {received['content']}")
+        if received['system-message']:
+            if received['content'] == "Initial connection.":
+                item.setText(f"{sender} joined.")
+        elif not received['system-message']:
+            item.setText(f"{sender}: {received['content']}")
+
         item.setToolTip(f"""Timestamp: {currentTime.strftime("%Y/%m/%d - %H:%M:%S")}
 UUID: {received['user'].get_uuid()}""")
         self.msglist.addItem(item)

@@ -8,7 +8,7 @@ from ui.cnslserver import ConsoleWindow
 from utils.debug import debug
 
 PORT = 65501
-HOST = "127.0.0.1"
+HOST = socket.gethostbyname(socket.getfqdn())
 
 
 class Server:
@@ -106,7 +106,11 @@ class Server:
                 for sock in self.clients:
                     print(f"ECHO: {pickle.loads(data.outb)} to {data.addr}")
                     sent = sock.send(pickle.dumps(data.outb))  # Returns the number of bytes sent
-                data.outb = data.outb[sent:]  # Remove bytes from send buffer
+                try:
+                    data.outb = data.outb[sent:]  # Remove bytes from send buffer
+                except:
+                    pass
+
 
 
 server = Server(HOST, PORT)
