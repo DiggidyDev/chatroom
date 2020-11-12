@@ -7,6 +7,7 @@ from utils.debug import debug
 
 class Activity(enum.Enum):
     ONLINE = "online"
+    OFFLINE = "offline"
 
 
 class User:
