@@ -1,18 +1,19 @@
+import datetime
 import pickle
 import socket
 import threading
-import datetime
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 
-from user import User
+from clientside.user import User
 from utils.debug import debug
+from utils import fmt
 
-HOST = "127.0.0.1"
+HOST = socket.gethostbyname(socket.gethostname())
 PORT = 65501
 
 
-class Ui_MyWindow(QtWidgets.QMainWindow):
+class Client(QtWidgets.QMainWindow):
     sendmsg = QtCore.pyqtSignal(int)
 
     def __init__(self, host, port):
@@ -22,9 +23,9 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
         self.HOST = host
 
         self.socket = None
-        self.u = User(input("Enter your username: "))
+        self.user = User(input("Enter your username: "))
 
-        self.setupUi()
+        self.setup_ui()
 
     def on_key(self, key: QtCore.Qt.Key):
 
@@ -32,12 +33,10 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
         # is in focus, and it's not empty
         if key == QtCore.Qt.Key_Return and \
                 self.msginput.hasFocus() and \
-                self.msginput.text() != "":
+                self.msginput.text().strip() != "":
 
             self.send_message(self.msginput.text())
             self.msginput.setText("")
-
-        print(key)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """
@@ -58,43 +57,38 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
             initialcontent = {
                 "content": "Initial connection.",
                 "system-message": True,
-                "user": self.u
+                "user": self.user
             }
 
             s.sendall(pickle.dumps(initialcontent))
 
             while True:
-                data = pickle.loads(s.recv(4096))
-                if data:
-                    print(f"RECV: {pickle.loads(data)}")
-                    self.update_msg_list(pickle.loads(data))
+                recv_data = s.recv(4096)
+                if recv_data:
+                    data = pickle.loads(recv_data)
+                    if isinstance(data, bytes):
+                        data = pickle.loads(data)
+                    print(f"RECV: {data}")
+                    if data["system-message"]:
+                        if data["content"] == "You have been kicked.":
+                            sys.excepthook(RuntimeError, BaseException, sys.last_traceback())
+                    from utils.update import update_msg_list
+                    update_msg_list(self, data)
 
-    @staticmethod
-    def format_content(**kwargs):
-        """
-        Correctly format content for outgoing
-        :param kwargs:
-        :return:
-        """
-        struct = {
-            "content": kwargs["content"],
-            "system-message": kwargs["system_message"],
-            "user": kwargs["user"]
-        }
-
-        return struct
-
-    def retranslateUi(self):
+    def retranslate_ui(self):
         _translate = QtCore.QCoreApplication.translate
-        self.setWindowTitle(_translate("MyWindow", f"Client: {self.u.nickname}"))
+        self.setWindowTitle(_translate("MyWindow", f"Client: {self.user.nickname}"))
         self.msginput.setPlaceholderText(_translate("MyWindow", "Send a message..."))
-        __sortingEnabled = self.msglist.isSortingEnabled()
-        self.msglist.setSortingEnabled(False)
-        item = self.msglist.item(0)
-        item.setText(_translate("MyWindow", "Something from a user"))
-        self.msglist.setSortingEnabled(__sortingEnabled)
+        __sortingEnabled = self.msgList.isSortingEnabled()
+        self.msgList.setSortingEnabled(False)
 
-    def setupUi(self):
+        currentTime = datetime.datetime.now()
+        item = self.msgList.item(0)
+        item.setText(_translate("MyWindow", f"{currentTime.strftime('[%Y/%m/%d  -  %H:%M %p]')}"))
+
+        self.msgList.setSortingEnabled(__sortingEnabled)
+
+    def setup_ui(self):
         self.setObjectName("MyWindow")
         self.setEnabled(True)
         self.resize(332, 200)
@@ -129,12 +123,12 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
         self.msginput.setObjectName("msginput")
         self.sendmsg.connect(self.on_key)
 
-        self.msglist = QtWidgets.QListWidget(self.centralwidget)
-        self.msglist.setGeometry(QtCore.QRect(10, 10, 311, 121))
-        self.msglist.setObjectName("msglist")
+        self.msgList = QtWidgets.QListWidget(self.centralwidget)
+        self.msgList.setGeometry(QtCore.QRect(10, 10, 311, 121))
+        self.msgList.setObjectName("msglist")
 
         item = QtWidgets.QListWidgetItem()
-        self.msglist.addItem(item)
+        self.msgList.addItem(item)
 
         self.setCentralWidget(self.centralwidget)
         self.menubar = QtWidgets.QMenuBar()
@@ -142,11 +136,11 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
         self.menubar.setObjectName("menubar")
         self.setMenuBar(self.menubar)
 
-        self.retranslateUi()
+        self.retranslate_ui()
         QtCore.QMetaObject.connectSlotsByName(self)
 
     def send_message(self, content):
-        tosend = self.format_content(content=content, system_message=False, user=self.u)
+        tosend = fmt.content(content=content, system_message=False, user=self.user)
         print(tosend)
         self.socket.sendall(pickle.dumps(tosend))
 
@@ -157,40 +151,18 @@ class Ui_MyWindow(QtWidgets.QMainWindow):
 
         super().show()
 
-    def update_msg_list(self, received):
-        item = QtWidgets.QListWidgetItem()
-        sender = str(received['user'])
 
-        # Display `You` for messages you, the user, have sent
-        # as to distinguish messages in an easier fashion
-        if received['user'].get_uuid() == self.u.get_uuid():
-            sender = "You"
-
-        currentTime = datetime.datetime.now()
-
-        if received['system-message']:
-            if received['content'] == "Initial connection.":
-                item.setText(f"{sender} joined.")
-        elif not received['system-message']:
-            item.setText(f"{sender}: {received['content']}")
-
-        item.setToolTip(f"""Timestamp: {currentTime.strftime("%Y/%m/%d - %H:%M:%S")}
-UUID: {received['user'].get_uuid()}""")
-        self.msglist.addItem(item)
-        self.msglist.scrollToBottom()
-
-
-def run():
+if __name__ == "__main__":
     import sys
     app = QtWidgets.QApplication(sys.argv)
 
-    window = Ui_MyWindow(
+    window = Client(
         HOST,
         PORT
     )
+    try:
+        window.show()
 
-    window.show()
-
-    sys.exit(app.exec_())
-
-run()
+        sys.exit(app.exec_())
+    finally:
+        window.socket.sendall(pickle.dumps(fmt.content(content="Leaving", system_message=True, user=window.user)))
