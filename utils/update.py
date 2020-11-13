@@ -1,5 +1,5 @@
-from datetime import datetime
 import pickle
+from datetime import datetime
 
 from PyQt5 import QtWidgets
 
@@ -26,7 +26,7 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
         else:
             item.setText(received["content"])
     elif not received['system-message']:
-        item.setText(f"{sender}: {received['content']}")
+        item.setText(f"{sender}: {received['content'].replace('fuck', '****')}")
 
     item.setToolTip(fr"""Timestamp: {currentTime.strftime("%Y/%m/%d - %H:%M:%S")}
 UUID: {received['user'].get_uuid() if received['user'] != 'Server' else None}""".strip())
@@ -34,5 +34,6 @@ UUID: {received['user'].get_uuid() if received['user'] != 'Server' else None}"""
         widget.msgList.addItem(item)
     except RuntimeError:
         return
+
     widget.msgList.scrollToBottom()
 
