@@ -1,13 +1,10 @@
-import enum
+import types
 import uuid
 from secrets import token_bytes
 
 from utils.debug import debug
 
-
-class Activity(enum.Enum):
-    ONLINE = "online"
-    OFFLINE = "offline"
+Activity = types.SimpleNamespace(ONLINE=1, OFFLINE=0)
 
 
 class User:
