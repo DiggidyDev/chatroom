@@ -57,7 +57,7 @@ class Client(QtWidgets.QMainWindow):
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """
-        Instantiating the superclass's event, and adding our own
+        Instantiating the superclass' event, and adding our own
         event handler for when the user presses a key.
         :param event:
         :return:
