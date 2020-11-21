@@ -6,7 +6,6 @@ import threading
 from PyQt5 import QtCore, QtWidgets, QtGui
 
 from clientside.user import User
-from utils.debug import debug
 from utils import fmt
 
 HOST = socket.gethostbyname(socket.gethostname())
@@ -14,6 +13,7 @@ PORT = 65501
 
 
 class Client(QtWidgets.QMainWindow):
+
     sendmsg = QtCore.pyqtSignal(int)
 
     def __init__(self, host, port):
@@ -27,28 +27,6 @@ class Client(QtWidgets.QMainWindow):
 
         self.setup_ui()
 
-    def on_key(self, key: QtCore.Qt.Key):
-
-        # Ensuring they press enter while the QLineEdit Widget
-        # is in focus, and it's not empty
-        if key == QtCore.Qt.Key_Return and \
-                self.msginput.hasFocus() and \
-                self.msginput.text().strip() != "":
-
-            self.send_message(self.msginput.text())
-            self.msginput.setText("")
-
-    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        """
-        Instantiating the superclass's event, and adding our own
-        event handler for when the user presses a key.
-        :param event:
-        :return:
-        """
-        super().keyPressEvent(event)
-        self.sendmsg.emit(event.key())
-
-    @debug(verbose=True)
     def connect(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect((self.HOST, self.PORT))
@@ -62,7 +40,7 @@ class Client(QtWidgets.QMainWindow):
 
             s.sendall(pickle.dumps(initialcontent))
 
-            while True:
+            while not self.stop_event.is_set():
                 recv_data = s.recv(4096)
                 if recv_data:
                     data = pickle.loads(recv_data)
@@ -71,9 +49,32 @@ class Client(QtWidgets.QMainWindow):
                     print(f"RECV: {data}")
                     if data["system-message"]:
                         if data["content"] == "You have been kicked.":
-                            sys.excepthook(RuntimeError, BaseException, sys.last_traceback())
+                            self.stop_event.set()
+                            self.close()
+
                     from utils.update import update_msg_list
                     update_msg_list(self, data)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        """
+        Instantiating the superclass's event, and adding our own
+        event handler for when the user presses a key.
+        :param event:
+        :return:
+        """
+        super().keyPressEvent(event)
+        self.sendmsg.emit(event.key())
+
+    def on_key(self, key: QtCore.Qt.Key):
+
+        # Ensuring they press enter while the QLineEdit Widget
+        # is in focus, and it's not empty
+        if key == QtCore.Qt.Key_Return and \
+                self.msginput.hasFocus() and \
+                self.msginput.text().strip() != "":
+
+            self.send_message(self.msginput.text())
+            self.msginput.setText("")
 
     def retranslate_ui(self):
         _translate = QtCore.QCoreApplication.translate
@@ -145,10 +146,9 @@ class Client(QtWidgets.QMainWindow):
         self.socket.sendall(pickle.dumps(tosend))
 
     def show(self):
-        conn_thread = threading.Thread(target=self.connect)
-        conn_thread.setDaemon(True)
-        conn_thread.start()
-
+        self.stop_event = threading.Event()
+        self.conn_thread = threading.Thread(target=self.connect)
+        self.conn_thread.start()
         super().show()
 
 
@@ -165,4 +165,5 @@ if __name__ == "__main__":
 
         sys.exit(app.exec_())
     finally:
-        window.socket.sendall(pickle.dumps(fmt.content(content="Leaving", system_message=True, user=window.user)))
+        print("Goodbye")
+        # window.socket.sendall(pickle.dumps(fmt.content(content="Leaving", system_message=True, user=window.user)))
