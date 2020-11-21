@@ -26,6 +26,10 @@ class User:
     def __int__(self):
         return len(self.friends)
 
+    @property
+    def name(self):
+        return self.__str__()
+
     def get_mutual_friends(self, user) -> list:
         pass
 
