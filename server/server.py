@@ -37,9 +37,9 @@ class Server(QtWidgets.QMainWindow):
         print(f"Connection successfully made from {':'.join(str(i) for i in addr)}")
 
         # Reserve UUID for when initial connection message is received
+        # But fill in other necessary details
         client_details = {
             "conn": conn,
-            "index": len(self.clients),
             "user": None
         }
         self.clients.append(client_details)
@@ -53,7 +53,7 @@ class Server(QtWidgets.QMainWindow):
     def conn_multi(self) -> None:
         # Create and bind the socket
         lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        lsock.bind((HOST, PORT))
+        lsock.bind(("", PORT))
 
         # Listen, don't use blocking calls
         lsock.listen()
@@ -91,7 +91,11 @@ class Server(QtWidgets.QMainWindow):
     def get_client_by(self, criteria: str, value) -> dict:
         for client in self.clients:
             for k, v in client.items():
+
                 if k == criteria and value == v:
+                    return client
+
+                elif isinstance(v, User) and str(v) == value:
                     return client
 
     def handle_conn(self, key, mask):
@@ -110,6 +114,10 @@ class Server(QtWidgets.QMainWindow):
                 self.sel.unregister(sock)  # No longer monitored by the selector
                 sock.close()
                 self.clients.remove(client)
+                self.send_message(f"{client['user']} left.")
+                update_msg_list(self, fmt.content(content=f"{client['user']} left.",
+                                                  user=self.user,
+                                                  system_message=True))
 
             if recv_bytes:
                 recv_content = pickle.loads(recv_bytes)
@@ -137,24 +145,31 @@ class Server(QtWidgets.QMainWindow):
     def kick(self):
         current_user = self.userList.currentItem()
         if current_user is not None:
-            current_index = self.userList.currentIndex().row()
-            client = self.get_client_by("index", current_index)
+            client = self.get_client_by("name", current_user.text())
             self.send_message("You have been kicked.", client)
-            self.sel.unregister(client["conn"])
-            client["conn"].close()
-            self.clients.remove(client)
-            self.send_message(f"{client['user']} was kicked.")
+            try:
+                self.sel.unregister(client["conn"])
+                client["conn"].close()
+            except BaseException as e:
+                pass
+            finally:
+                self.clients.remove(client)
+                self.userList.takeItem(self.userList.selectedIndexes()[0].row())
+                self.send_message(f"{client['user']} was kicked.")
+                update_msg_list(self, fmt.content(content=f"{client['user']} was kicked.",
+                                                  user=self.user,
+                                                  system_message=True))
 
     def retranslate_ui(self):
         _translate = QtCore.QCoreApplication.translate
-        self.setWindowTitle(_translate("MainWindow", "Server", None))
-        self.serverInfoGroupBox.setTitle(_translate("MainWindow", "Server info", None))
-        self.IPLabel.setText(_translate("MainWindow", f"<html><head/><body><p align=\"center\">IP: {self.host}</p></body></html>", None))
-        self.PORTLabel.setText(_translate("MainWindow", f"<html><head/><body><p align=\"center\">PORT: {self.port}</p></body></html>", None))
-        self.usersGroupBox.setTitle(_translate("MainWindow", "Users", None))
-        self.muteButton.setText(_translate("MainWindow", "Mute", None))
-        self.kickButton.setText(_translate("MainWindow", "Kick", None))
-        self.msgListGroupBox.setTitle(_translate("MainWindow", "Messages", None))
+        self.setWindowTitle(_translate("self", "Server", None))
+        self.serverInfoGroupBox.setTitle(_translate("self", "Server info", None))
+        self.IPLabel.setText(_translate("self", f"<html><head/><body><p align=\"center\">IP: {self.host}</p></body></html>", None))
+        self.PORTLabel.setText(_translate("self", f"<html><head/><body><p align=\"center\">PORT: {self.port}</p></body></html>", None))
+        self.usersGroupBox.setTitle(_translate("self", "Users", None))
+        self.muteButton.setText(_translate("self", "Mute", None))
+        self.kickButton.setText(_translate("self", "Kick", None))
+        self.msgListGroupBox.setTitle(_translate("self", "Messages", None))
         self.msgList.setSortingEnabled(False)
         current_time = datetime.datetime.now()
         item = self.msgList.item(0)
