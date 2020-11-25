@@ -1,3 +1,5 @@
+# TODO: INCLUDE TIMESTAMPED MESSAGE AT TOP OF CLIENT'S
+#       MESSAGE LIST
 import datetime
 import pickle
 import socket
@@ -21,10 +23,15 @@ class Client(QtWidgets.QMainWindow):
         self.PORT = port
         self.HOST = host
 
+        self.kicked = False
         self.socket = None
-        self.user = User(input("Enter your username: "))
+        self.user = None
 
         self.setup_ui()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self.stop_event.set()
+        super().closeEvent(event)
 
     def connect(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -48,11 +55,32 @@ class Client(QtWidgets.QMainWindow):
                     print(f"RECV: {data}")
                     if data["system-message"]:
                         if data["content"] == "You have been kicked.":
+                            # Modify kicked flag for showing kicked dialog on
+                            # connection abortion
+                            self.kicked = True
                             self.stop_event.set()
                             self.close()
+                        elif "Initial connection." in data["content"]:
+                            item = QtWidgets.QListWidgetItem()
+                            item.setText(f"{data['user']}")
+                            self.userList.addItem(item)
 
                     from utils.update import update_msg_list
                     update_msg_list(self, data)
+            # self.stop_event.set()
+
+    def create_user(self):
+        self.user = User(self.login.inputNickname.text())
+        self.login.close()
+
+    def do_login(self):
+        self.login = LoginDialog()
+        self.login.buttonAnon.clicked.connect(self.create_user)
+        self.login.inputNickname.returnPressed.connect(self.create_user)
+        self.login.exec()
+
+    def login_successful(self) -> bool:
+        return self.user is not None
 
     def on_key(self, key: QtCore.Qt.Key):
         msg = self.sendMsgBox.toPlainText()
@@ -72,11 +100,6 @@ class Client(QtWidgets.QMainWindow):
         self.friendButton.setText(_translate("self", "Add friend"))
         __sortingEnabled = self.userList.isSortingEnabled()
         self.userList.setSortingEnabled(False)
-
-        item = self.userList.item(0)
-        item.setText(_translate("self", "User1"))
-        item = self.userList.item(1)
-        item.setText(_translate("self", "User2"))
 
         self.userList.setSortingEnabled(__sortingEnabled)
         self.chatroomGroupBox.setTitle(_translate("self", "Chatroom"))
@@ -126,7 +149,7 @@ class Client(QtWidgets.QMainWindow):
         sizePolicy.setHeightForWidth(self.sizePolicy().hasHeightForWidth())
         self.setSizePolicy(sizePolicy)
 
-        # Main window CSS
+        # Main client CSS
         self.setStyleSheet("#self {\n"
         "    background-color:#A054ED;\n"
         "}\n"
@@ -278,10 +301,6 @@ class Client(QtWidgets.QMainWindow):
         self.userList.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self.userList.setTabKeyNavigation(False)
         self.userList.setObjectName("userList")
-        item = QtWidgets.QListWidgetItem()
-        self.userList.addItem(item)
-        item = QtWidgets.QListWidgetItem()
-        self.userList.addItem(item)
         self.usersGridLayout.addWidget(self.userList, 0, 0, 1, 2)
         self.horizontalLayout.addLayout(self.usersGridLayout)
         self.gridLayout.addWidget(self.usersGroupBox, 0, 1, 1, 1)
@@ -427,6 +446,7 @@ class Client(QtWidgets.QMainWindow):
 
         self.gridLayout.addWidget(self.msgListGroupBox, 0, 0, 2, 1)
         self.setCentralWidget(self.centralwidget)
+
         self.menubar = QtWidgets.QMenuBar(self)
         self.menubar.setGeometry(QtCore.QRect(0, 0, 578, 23))
         self.menubar.setStyleSheet("QMenuBar::item:selected {\n"
@@ -554,11 +574,160 @@ class Client(QtWidgets.QMainWindow):
         self.socket.sendall(pickle.dumps(tosend))
 
     def show(self):
-        self.stop_event = threading.Event()
-        self.conn_thread = threading.Thread(target=self.connect)
-        self.conn_thread.start()
+        self.do_login()
 
-        super().show()
+        if self.login_successful():
+            self.stop_event = threading.Event()
+            self.conn_thread = threading.Thread(target=self.connect)
+
+            # Allows main thread to exit when, and only when,
+            # daemon threads are left
+            self.conn_thread.setDaemon(True)
+            self.conn_thread.start()
+
+            super().show()
+
+
+class LoginDialog(QtWidgets.QDialog):
+    """
+    First dialog to prompt user to either continue without
+    an account, or to register to create a new one, or log
+    in with an existing account.
+
+    The chatroom(s) won't be accessible until a successful
+    login is detected.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+
+    def disable_account_inputs(self):
+        if len(self.inputNickname.text()) > 0 and self.inputUsername.isEnabled():
+            self.inputUsername.setEnabled(False)
+            self.inputPassword.setEnabled(False)
+            self.buttonLoginRegister.setEnabled(False)
+
+        elif len(self.inputNickname.text()) == 0 and not self.inputUsername.isEnabled():
+            self.inputUsername.setEnabled(True)
+            self.inputPassword.setEnabled(True)
+            self.buttonLoginRegister.setEnabled(True)
+
+    def disable_anon_input(self):
+        if any(0 < len(n.text()) for n in [self.inputPassword, self.inputUsername])\
+                and self.inputNickname.isEnabled():
+            self.inputNickname.setEnabled(False)
+            self.buttonAnon.setEnabled(False)
+        elif sum([len(n.text()) for n in [self.inputPassword, self.inputUsername]])\
+                == 0:
+            self.inputNickname.setEnabled(True)
+            self.buttonAnon.setEnabled(True)
+
+    def setup_ui(self):
+        self.setObjectName("self")
+        self.resize(461, 238)
+        self.setMinimumSize(QtCore.QSize(461, 238))
+        self.setMaximumSize(QtCore.QSize(461, 238))
+        self.setStyleSheet("QPushButton, QPlainTextEdit {\n"
+                           "    background-color: rgb(56, 40, 80);\n"
+                           "    color: white;\n"
+                           "    font-weight: bold;\n"
+                           "}\n"
+                           "QPushButton::disabled {\n"
+                           "   background-color: rgb(21, 15, 30);\n"
+                           "}\n"
+                           "QLineEdit::disabled {\n"
+                           "   background-color: rgb(220, 220, 220);\n"
+                           "}\n"
+                           "#self {\n"
+                           "    background-color:#A054ED;\n"
+                           "}\n"
+                           "")
+        self.gridLayout = QtWidgets.QGridLayout(self)
+        self.gridLayout.setObjectName("gridLayout")
+        self.buttonAnon = QtWidgets.QPushButton(self)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.buttonAnon.sizePolicy().hasHeightForWidth())
+        self.buttonAnon.setSizePolicy(sizePolicy)
+        self.buttonAnon.setObjectName("buttonAnon")
+        self.gridLayout.addWidget(self.buttonAnon, 6, 1, 1, 1)
+        spacerItem = QtWidgets.QSpacerItem(20, 19, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Preferred)
+        self.gridLayout.addItem(spacerItem, 5, 0, 1, 1)
+        self.inputNickname = QtWidgets.QLineEdit(self)
+        self.inputNickname.setEnabled(True)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.inputNickname.sizePolicy().hasHeightForWidth())
+        self.inputNickname.setSizePolicy(sizePolicy)
+        self.inputNickname.setText("")
+        self.inputNickname.setObjectName("inputNickname")
+        self.gridLayout.addWidget(self.inputNickname, 6, 0, 1, 1)
+        self.labelContAnon = QtWidgets.QLabel(self)
+        self.labelContAnon.setStyleSheet("")
+        self.labelContAnon.setAlignment(QtCore.Qt.AlignHCenter|QtCore.Qt.AlignTop)
+        self.labelContAnon.setObjectName("labelContAnon")
+        self.gridLayout.addWidget(self.labelContAnon, 2, 0, 1, 2)
+        self.buttonLoginRegister = QtWidgets.QPushButton(self)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.buttonLoginRegister.sizePolicy().hasHeightForWidth())
+        self.buttonLoginRegister.setSizePolicy(sizePolicy)
+        self.buttonLoginRegister.setObjectName("buttonLoginRegister")
+        self.gridLayout.addWidget(self.buttonLoginRegister, 7, 5, 1, 1)
+        self.inputUsername = QtWidgets.QLineEdit(self)
+        self.inputUsername.setObjectName("inputUsername")
+        self.gridLayout.addWidget(self.inputUsername, 6, 4, 1, 2)
+        self.inputPassword = QtWidgets.QLineEdit(self)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.inputPassword.sizePolicy().hasHeightForWidth())
+        self.inputPassword.setSizePolicy(sizePolicy)
+        self.inputPassword.setFrame(True)
+        self.inputPassword.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.inputPassword.setObjectName("inputPassword")
+        self.gridLayout.addWidget(self.inputPassword, 7, 4, 1, 1)
+        spacerItem1 = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+        self.gridLayout.addItem(spacerItem1, 8, 0, 1, 1)
+        spacerItem2 = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Preferred)
+        self.gridLayout.addItem(spacerItem2, 0, 1, 1, 1)
+        self.verticalDivider = QtWidgets.QFrame(self)
+        self.verticalDivider.setFrameShape(QtWidgets.QFrame.VLine)
+        self.verticalDivider.setFrameShadow(QtWidgets.QFrame.Sunken)
+        self.verticalDivider.setObjectName("verticalDivider")
+        self.gridLayout.addWidget(self.verticalDivider, 0, 2, 9, 1)
+        self.toggleExistingAcc = QtWidgets.QCheckBox(self)
+        self.toggleExistingAcc.setLayoutDirection(QtCore.Qt.RightToLeft)
+        self.toggleExistingAcc.setObjectName("toggleExistingAcc")
+        self.gridLayout.addWidget(self.toggleExistingAcc, 2, 4, 1, 2)
+
+        self.retranslate_ui()
+        self.toggleExistingAcc.toggled.connect(self.toggle_register_button)
+        self.inputNickname.textEdited.connect(self.disable_account_inputs)
+        self.inputUsername.textEdited.connect(self.disable_anon_input)
+
+        QtCore.QMetaObject.connectSlotsByName(self)
+
+    def retranslate_ui(self):
+        _translate = QtCore.QCoreApplication.translate
+        self.setWindowTitle(_translate("self", "Account Setup"))
+        self.buttonAnon.setText(_translate("self", "Go!"))
+        self.inputNickname.setPlaceholderText(_translate("self", "Nickname"))
+        self.labelContAnon.setText(_translate("self", "Continue anonymously"))
+        self.buttonLoginRegister.setText(_translate("self", "Register"))
+        self.inputUsername.setPlaceholderText(_translate("self", "Username"))
+        self.inputPassword.setPlaceholderText(_translate("self", "Password"))
+        self.toggleExistingAcc.setText(_translate("self", "Already got an account?            "))
+
+    def toggle_register_button(self):
+        if self.buttonLoginRegister.text() == "Log in":
+            self.buttonLoginRegister.setText("Register")
+        else:
+            self.buttonLoginRegister.setText("Log in")
 
 
 class MessageBox(QtWidgets.QPlainTextEdit):
@@ -568,7 +737,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
     in the client's QMainWindow; it'll be swallowed.
 
     Passing the caller's class instance in order to access the
-    window's other widgets, useful for displaying messages.
+    client's other widgets, useful for displaying messages.
     """
 
     sendmsg = QtCore.pyqtSignal(int)
@@ -629,16 +798,20 @@ if __name__ == "__main__":
     import sys
     app = QtWidgets.QApplication(sys.argv)
 
-    window = Client(
+    client = Client(
         HOST,
         PORT
     )
     try:
-        window.show()
+        client.show()
 
+        # Allow for a clean exit
         sys.exit(app.exec_())
+    except Exception as e:
+        print(e)
     finally:
-        print("Goodbye")
-        kickWindow = KickedDialog()
-        kickWindow.show()
-        sys.exit(app.exec_())
+        if client.kicked:
+            kickWindow = KickedDialog()
+            kickWindow.show()
+
+            sys.exit(app.exec_())
