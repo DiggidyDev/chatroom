@@ -8,24 +8,40 @@ import threading
 from PyQt5 import QtCore, QtWidgets, QtGui
 
 from clientside.user import User
-from utils.debug import debug
-from utils import fmt
+from utils import fmt, update
 
-HOST = socket.gethostbyname(socket.gethostname())
-PORT = 65501
+
+HOST = "18.217.109.81"  # AWS hosting the server
+PORT = 65501  # Server listening to connections on this port
 
 
 class Client(QtWidgets.QMainWindow):
+    """
+    The main client interface with which the
+    user will be interacting.
+    """
+
+    # Typehints, as proposed by:
+    # PEP-483
+    # PEP-484
+    # PEP-526
+
+    HOST: str
+    PORT: int
+
+    kicked: bool
+    login: "LoginDialog"
+    socket: socket.socket
+    user: User
 
     def __init__(self, host, port):
         super().__init__()
 
+        self.ADDRESS = (host, port)
         self.PORT = port
         self.HOST = host
 
         self.kicked = False
-        self.socket = None
-        self.user = None
 
         self.setup_ui()
 
@@ -59,34 +75,43 @@ class Client(QtWidgets.QMainWindow):
                             # connection abortion
                             self.kicked = True
                             self.stop_event.set()
-                            self.close()
+                            self.socket.close()
+                            self.close()  # Close the current window
                         elif "Initial connection." in data["content"]:
                             item = QtWidgets.QListWidgetItem()
                             item.setText(f"{data['user']}")
                             self.userList.addItem(item)
 
-                    from utils.update import update_msg_list
-                    update_msg_list(self, data)
+                    update.update_msg_list(self, data)
             # self.stop_event.set()
 
-    def create_user(self):
-        self.user = User(self.login.inputNickname.text())
-        self.login.close()
+    def create_anon_user(self):
+        if len(self.login.inputNickname.text().strip()) > 0:
+            self.user = User(self.login.inputNickname.text())
+            print(self.user.get_uuid())
+            self.login.close()
+        elif len(self.login.inputNickname.text().strip()) == 0:
+            # FIX DIALOG APPEARING TWICE
+            print("hi")
+            errorDialog = CustomDialog("Error", "Please enter a nickname")
+            errorDialog.exec_()
+
+    @property
+    def currentRoom(self):
+        return self.chatroomComboBox.currentText()
 
     def do_login(self):
         self.login = LoginDialog()
-        self.login.buttonAnon.clicked.connect(self.create_user)
-        self.login.inputNickname.returnPressed.connect(self.create_user)
-        self.login.exec()
+        self.login.buttonAnon.clicked.connect(self.create_anon_user)
+        return self.login.exec_()
 
     def login_successful(self) -> bool:
         return self.user is not None
 
-    def on_key(self, key: QtCore.Qt.Key):
+    def on_key(self):
         msg = self.sendMsgBox.toPlainText()
 
-        if key == QtCore.Qt.Key_Return and \
-                self.sendMsgBox.hasFocus() and \
+        if self.sendMsgBox.hasFocus() and \
                 msg.strip() != "":
 
             self.send_message(msg)
@@ -94,7 +119,7 @@ class Client(QtWidgets.QMainWindow):
 
     def retranslate_ui(self):
         _translate = QtCore.QCoreApplication.translate
-        self.setWindowTitle(_translate("self", "Client"))
+        self.setWindowTitle(_translate("self", "Client - OLD"))
         self.usersGroupBox.setTitle(_translate("self", "Users"))
         self.muteButton.setText(_translate("self", "Mute"))
         self.friendButton.setText(_translate("self", "Add friend"))
@@ -142,6 +167,8 @@ class Client(QtWidgets.QMainWindow):
 
     def setup_ui(self):
         self.setObjectName("self")
+        icon = QtGui.QIcon("assets/window_icon.ICO")
+        self.setWindowIcon(icon)
         self.resize(578, 363)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
@@ -400,7 +427,7 @@ class Client(QtWidgets.QMainWindow):
         self.msgList.setAlternatingRowColors(False)
         self.msgList.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.msgList.setMovement(QtWidgets.QListView.Static)
-        self.msgList.setProperty("isWrapping", True)
+        self.msgList.setProperty("isWrapping", False)
         self.msgList.setResizeMode(QtWidgets.QListView.Adjust)
         self.msgList.setViewMode(QtWidgets.QListView.ListMode)
         self.msgList.setUniformItemSizes(False)
@@ -574,18 +601,29 @@ class Client(QtWidgets.QMainWindow):
         self.socket.sendall(pickle.dumps(tosend))
 
     def show(self):
-        self.do_login()
+        if update.check_for_updates():
+            from utils.update import start_download
+
+            dl_thread = threading.Thread(target=start_download)
+            dl_thread.setDaemon(True)
+            dl_thread.start()
+            dl_thread.join()
+
+        ret_code = self.do_login()
 
         if self.login_successful():
             self.stop_event = threading.Event()
             self.conn_thread = threading.Thread(target=self.connect)
 
-            # Allows main thread to exit when, and only when,
-            # daemon threads are left
+            # Allows main thread to exit when
+            # only daemon threads are left
             self.conn_thread.setDaemon(True)
             self.conn_thread.start()
 
             super().show()
+        else:
+            # Handles the user closing the login dialog
+            sys.exit(ret_code)
 
 
 class LoginDialog(QtWidgets.QDialog):
@@ -614,12 +652,10 @@ class LoginDialog(QtWidgets.QDialog):
             self.buttonLoginRegister.setEnabled(True)
 
     def disable_anon_input(self):
-        if any(0 < len(n.text()) for n in [self.inputPassword, self.inputUsername])\
-                and self.inputNickname.isEnabled():
+        if len(self.inputUsername.text() + self.inputPassword.text()) > 0 and self.inputNickname.isEnabled():
             self.inputNickname.setEnabled(False)
             self.buttonAnon.setEnabled(False)
-        elif sum([len(n.text()) for n in [self.inputPassword, self.inputUsername]])\
-                == 0:
+        elif len(self.inputUsername.text() + self.inputPassword.text()) == 0:
             self.inputNickname.setEnabled(True)
             self.buttonAnon.setEnabled(True)
 
@@ -646,24 +682,31 @@ class LoginDialog(QtWidgets.QDialog):
         self.gridLayout = QtWidgets.QGridLayout(self)
         self.gridLayout.setObjectName("gridLayout")
         self.buttonAnon = QtWidgets.QPushButton(self)
+
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.buttonAnon.sizePolicy().hasHeightForWidth())
+
         self.buttonAnon.setSizePolicy(sizePolicy)
         self.buttonAnon.setObjectName("buttonAnon")
         self.gridLayout.addWidget(self.buttonAnon, 6, 1, 1, 1)
         spacerItem = QtWidgets.QSpacerItem(20, 19, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Preferred)
         self.gridLayout.addItem(spacerItem, 5, 0, 1, 1)
+
         self.inputNickname = QtWidgets.QLineEdit(self)
         self.inputNickname.setEnabled(True)
+
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.inputNickname.sizePolicy().hasHeightForWidth())
+
         self.inputNickname.setSizePolicy(sizePolicy)
         self.inputNickname.setText("")
         self.inputNickname.setObjectName("inputNickname")
+        self.inputNickname.setMaxLength(10)
+
         self.gridLayout.addWidget(self.inputNickname, 6, 0, 1, 1)
         self.labelContAnon = QtWidgets.QLabel(self)
         self.labelContAnon.setStyleSheet("")
@@ -671,15 +714,18 @@ class LoginDialog(QtWidgets.QDialog):
         self.labelContAnon.setObjectName("labelContAnon")
         self.gridLayout.addWidget(self.labelContAnon, 2, 0, 1, 2)
         self.buttonLoginRegister = QtWidgets.QPushButton(self)
+
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.buttonLoginRegister.sizePolicy().hasHeightForWidth())
+
         self.buttonLoginRegister.setSizePolicy(sizePolicy)
         self.buttonLoginRegister.setObjectName("buttonLoginRegister")
         self.gridLayout.addWidget(self.buttonLoginRegister, 7, 5, 1, 1)
         self.inputUsername = QtWidgets.QLineEdit(self)
         self.inputUsername.setObjectName("inputUsername")
+        self.inputUsername.setMaxLength(24)
         self.gridLayout.addWidget(self.inputUsername, 6, 4, 1, 2)
         self.inputPassword = QtWidgets.QLineEdit(self)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
@@ -709,10 +755,13 @@ class LoginDialog(QtWidgets.QDialog):
         self.toggleExistingAcc.toggled.connect(self.toggle_register_button)
         self.inputNickname.textEdited.connect(self.disable_account_inputs)
         self.inputUsername.textEdited.connect(self.disable_anon_input)
+        self.inputPassword.textEdited.connect(self.disable_anon_input)
 
         QtCore.QMetaObject.connectSlotsByName(self)
 
     def retranslate_ui(self):
+        self.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+
         _translate = QtCore.QCoreApplication.translate
         self.setWindowTitle(_translate("self", "Account Setup"))
         self.buttonAnon.setText(_translate("self", "Go!"))
@@ -734,7 +783,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
     """
     Subclassing the QPlainTextEdit widget as it independently
     detects keyPressEvent and will not emit the keyPressEvent
-    in the client's QMainWindow; it'll be swallowed.
+    in the client's QMainWindow; it'll be swallowed otherwise.
 
     Passing the caller's class instance in order to access the
     client's other widgets, useful for displaying messages.
@@ -746,26 +795,52 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         super().__init__(*args)
         self.mainWindow = window
         self.sendmsg.connect(self.mainWindow.on_key)
+        self.shiftPressed = False
 
     def keyPressEvent(self, e: QtGui.QKeyEvent) -> None:
-        self.sendmsg.emit(e.key())
-        super().keyPressEvent(e)
+        """
+        Used for allowing shift-returning for new lines,
+        and specific case-checking means that a new line
+        isn't added to the next message after sending one.
+        :param e:
+        :return:
+        """
+        if not self.shiftPressed and e.key() == QtCore.Qt.Key_Shift:
+            self.shiftPressed = True
+        elif not self.shiftPressed and e.key() == QtCore.Qt.Key_Return:
+            self.sendmsg.emit(e.key())
+        else:
+            super().keyPressEvent(e)
+
+    def keyReleaseEvent(self, e: QtGui.QKeyEvent) -> None:
+        """
+        Modifying the shiftPressed flag in use for
+        shift-returning for new lines.
+        :param e:
+        :return:
+        """
+        if e.key() == QtCore.Qt.Key_Shift:
+            self.shiftPressed = False
+        super().keyReleaseEvent(e)
 
 
-class KickedDialog(QtWidgets.QDialog):
+class CustomDialog(QtWidgets.QDialog):
 
-    def __init__(self):
+    def __init__(self, window_title, message):
         super().__init__()
+        self.window_title = window_title
+        self.message = message
         self.setup_ui()
 
     def retranslateUi(self):
-        self.setWindowTitle(QtCore.QCoreApplication.translate("Kicked", "Kicked", None))
-        self.label.setText(QtCore.QCoreApplication.translate("Kicked", "You were kicked from the room.", None))
-        self.pushButton.setText(QtCore.QCoreApplication.translate("Kicked", "OK", None))
+        self.setWindowTitle(QtCore.QCoreApplication.translate(self.window_title, self.window_title, None))
+        self.label.setText(QtCore.QCoreApplication.translate(self.window_title, self.message, None))
+        self.pushButton.setText(QtCore.QCoreApplication.translate(self.window_title, "OK", None))
+        self.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
 
     def setup_ui(self):
         if not self.objectName():
-            self.setObjectName("Kicked")
+            self.setObjectName(self.window_title)
         self.resize(304, 181)
         self.setMinimumSize(QtCore.QSize(304, 181))
         self.setMaximumSize(QtCore.QSize(304, 181))
@@ -777,10 +852,10 @@ class KickedDialog(QtWidgets.QDialog):
                            "QLabel {\n"
                            "    color: white;\n"
                            "}"
-                           "#Kicked {\n"
+                           "#WINDOWTITLE {\n"
                            "	background-color:#A054ED;\n"
                            "}\n"
-                           "")
+                           "".replace("WINDOWTITLE", self.window_title))
         self.label = QtWidgets.QLabel(self)
         self.label.setObjectName(u"label")
         self.label.setGeometry(QtCore.QRect(70, 60, 161, 16))
@@ -809,9 +884,11 @@ if __name__ == "__main__":
         sys.exit(app.exec_())
     except Exception as e:
         print(e)
+        if hasattr(client, "socket"):
+            client.socket.close()
     finally:
         if client.kicked:
-            kickWindow = KickedDialog()
+            kickWindow = CustomDialog("Kicked", "You were kicked from the server.")
             kickWindow.show()
 
             sys.exit(app.exec_())
