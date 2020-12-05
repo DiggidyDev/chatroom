@@ -1,0 +1,1 @@
+pyinstaller clientside/client.py --noconfirm --add-data "./assets/window_icon.ico;./assets" -i "./assets/window_icon.ico" -F --exclude-module utils/versionzip.py
