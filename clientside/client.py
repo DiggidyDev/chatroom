@@ -1,17 +1,18 @@
 # TODO: INCLUDE TIMESTAMPED MESSAGE AT TOP OF CLIENT'S
 #       MESSAGE LIST
-import datetime
+# import datetime
+import hashlib
 import pickle
 import socket
 import threading
+from typing import Union
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 
 from clientside.user import User
 from utils import fmt, update
 
-
-HOST = "18.217.109.81"  # AWS hosting the server
+HOST = "127.0.0.1"  # "18.217.109.81"  # AWS hosting the server
 PORT = 65501  # Server listening to connections on this port
 
 
@@ -31,8 +32,8 @@ class Client(QtWidgets.QMainWindow):
 
     kicked: bool
     login: "LoginDialog"
-    socket: socket.socket
-    user: User
+    socket: Union[socket.socket, None]
+    user: Union[User, None]
 
     def __init__(self, host, port):
         super().__init__()
@@ -41,9 +42,45 @@ class Client(QtWidgets.QMainWindow):
         self.PORT = port
         self.HOST = host
 
+        self.email = None
         self.kicked = False
+        self.socket = None
+        self.user = None
 
         self.setup_ui()
+
+    def check_password(self, password: str, salt: str):
+        attempted_pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200000)
+
+        pw_q = {
+            "content": "Query",
+            "system-message": True,
+            "data": self.email,
+            "datatype": "email",
+            "get": "password"
+        }
+
+        self.socket.sendall(pickle.dumps(pw_q))
+
+        pw_hash = pickle.loads(self.socket.recv(4096))
+
+        return attempted_pw_hash.hex() == pw_hash
+
+    def check_fields(self) -> bool:
+        if len(self.login.inputUsername.text().strip()) == 0 and \
+                self.login.inputUsername.isVisible():
+            errdialog = CustomDialog("Username", "Please enter your username")
+        elif len(self.login.inputEmail.text().strip()) == 0:
+            errdialog = CustomDialog("Email", "Please enter your email")
+        elif len(self.login.inputPassword.text().strip()) == 0:
+            errdialog = CustomDialog("Password", "Please enter your password")
+        elif not fmt.is_valid_email(self.login.inputEmail.text()):
+            errdialog = CustomDialog("Email",
+                                     "Please enter a valid email address")
+        else:
+            return True
+        errdialog.exec_()
+        return False
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.stop_event.set()
@@ -51,8 +88,10 @@ class Client(QtWidgets.QMainWindow):
 
     def connect(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((self.HOST, self.PORT))
-            self.socket = s
+            if self.socket:
+                self.socket.close()
+                s.connect((self.HOST, self.PORT))
+                self.socket = s
 
             initialcontent = {
                 "content": "Initial connection.",
@@ -82,44 +121,164 @@ class Client(QtWidgets.QMainWindow):
                             item.setText(f"{data['user']}")
                             self.userList.addItem(item)
 
-                    update.update_msg_list(self, data)
-            # self.stop_event.set()
+                    fmt.update_msg_list(self, data)
 
     def create_anon_user(self):
-        if len(self.login.inputNickname.text().strip()) > 0:
-            self.user = User(self.login.inputNickname.text())
-            print(self.user.get_uuid())
-            self.login.close()
-        elif len(self.login.inputNickname.text().strip()) == 0:
-            # FIX DIALOG APPEARING TWICE
-            print("hi")
-            errorDialog = CustomDialog("Error", "Please enter a nickname")
-            errorDialog.exec_()
+        if self.login.buttonAnon.hasFocus() or self.login.inputNickname.hasFocus():
+            if len(self.login.inputNickname.text().strip()) > 0:
+                self.user = User(self.login.inputNickname.text())
+                print(self.user.get_uuid())
+                self.login.close()
+            elif len(self.login.inputNickname.text().strip()) == 0:
+                errdialog = CustomDialog("Error", "Please enter a nickname")
+                errdialog.exec_()
 
     @property
     def currentRoom(self):
         return self.chatroomComboBox.currentText()
 
-    def do_login(self):
+    def do_account_setup(self):
         self.login = LoginDialog()
         self.login.buttonAnon.clicked.connect(self.create_anon_user)
+        self.login.buttonLoginRegister.clicked.connect(self.inspect_button)
+        self.login.toggleExistingAcc.toggled.connect(self.login.display_username_input)
+        self.login.toggleExistingAcc.toggled.connect(self.login.toggle_register_button)
+        self.login.inputNickname.textEdited.connect(self.login.disable_account_inputs)
+
+        for i in [self.login.inputEmail,
+                  self.login.inputPassword,
+                  self.login.inputUsername]:
+            i.textEdited.connect(self.login.disable_anon_input)
+            i.returnPressed.connect(self.inspect_button)
+
         return self.login.exec_()
 
+    def do_login(self):
+        if self.check_fields():
+            self.email = self.login.inputEmail.text()
+
+            def _do_user_login(_client: Client):
+                if not _client.socket:
+                    _client.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _client.socket.connect((_client.HOST, _client.PORT))
+
+                email_q = {
+                    "content": "Query",
+                    "system-message": True,
+                    "get": "user",
+                    "data": _client.email,
+                    "datatype": "email"
+                }
+
+                _client.socket.sendall(pickle.dumps(email_q))
+                user_tuple = pickle.loads(_client.socket.recv(4096))
+                if user_tuple:
+                    pw = _client.login.inputPassword.text()
+                    if _client.check_password(pw, user_tuple[1]):
+                        _client.user = User(existing_data=user_tuple)
+                        print("HURRAH!")
+                    else:
+                        _client.email = None
+                else:
+                    _client.email = None
+
+            c_thread = threading.Thread(target=_do_user_login,
+                                        args=[self])
+            c_thread.setDaemon(True)
+            c_thread.start()
+            c_thread.join()
+
+    def do_registration(self):
+        if self.check_fields():
+            self.email = self.login.inputEmail.text()
+
+            def _register_user(_client: Client):
+                """
+                Set up a connection with the server to query
+                a user account's existence, dependant on
+                an email being found in the database.
+
+                If an email is found, an error window will be
+                shown; "user already exists".
+
+                :param _client: The QMainWindow instance.
+                :return:
+                """
+                if not _client.socket:
+                    _client.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _client.socket.connect((_client.HOST, _client.PORT))
+
+                existing_user_q = {
+                    "content": "Query",
+                    "system-message": True,
+                    "get": "user",
+                    "datatype": "email",
+                    "data": _client.email
+                }
+
+                _client.socket.sendall(pickle.dumps(existing_user_q))
+                email_was_found = pickle.loads(_client.socket.recv(4096))
+
+                if email_was_found:
+                    _client.email = None
+                else:
+                    pw = _client.login.inputPassword.text()
+                    username = _client.login.inputUsername.text()
+
+                    register_user_q = {
+                        "content": "Query",
+                        "system-message": True,
+                        "create": "user",
+                        "data": (_client.email, username, pw),
+                        "datatype": "email, username, pw"
+                    }
+
+                    _client.socket.sendall(pickle.dumps(register_user_q))
+                    registered_user = pickle.loads(_client.socket.recv(4096))
+
+                    if registered_user:
+                        _client.user = registered_user
+
+            c_thread = threading.Thread(target=_register_user,
+                                        args=[self])
+            # Check for valid ascii characters
+            c_thread.start()
+            c_thread.join()
+
+    def inspect_button(self):
+        if self.login.buttonLoginRegister.text() == "Log in":
+            self.do_login()
+        else:
+            self.do_registration()
+        if self.login_successful():
+            self.socket.close()
+            self.login.close()
+        else:
+            if self.login.buttonLoginRegister.text() == "Log in":
+                errdialog = CustomDialog("Incorrect Login",
+                                         "wrong credentials! pls try agen :')")
+            else:
+                errdialog = CustomDialog("User already exists",
+                                         "user exists, you numbnut! pls try agen :)")
+            errdialog.exec_()
+
     def login_successful(self) -> bool:
-        return self.user is not None
+        return any(condition is not None for condition in [
+            self.email,
+            self.user
+        ])
 
     def on_key(self):
         msg = self.sendMsgBox.toPlainText()
 
         if self.sendMsgBox.hasFocus() and \
                 msg.strip() != "":
-
             self.send_message(msg)
             self.sendMsgBox.setPlainText("")
 
     def retranslate_ui(self):
         _translate = QtCore.QCoreApplication.translate
-        self.setWindowTitle(_translate("self", "Client - OLD"))
+        self.setWindowTitle(_translate("self", "Client"))
         self.usersGroupBox.setTitle(_translate("self", "Users"))
         self.muteButton.setText(_translate("self", "Mute"))
         self.friendButton.setText(_translate("self", "Add friend"))
@@ -178,48 +337,48 @@ class Client(QtWidgets.QMainWindow):
 
         # Main client CSS
         self.setStyleSheet("#self {\n"
-        "    background-color:#A054ED;\n"
-        "}\n"
-        "\n"
-        "QWidget {\n"
-        "    outline: none;\n"
-        "}\n"
-        "\n"
-        "QMenuBar {\n"
-        "    background-color: rgb(56, 40, 80);\n"
-        "    border-bottom: 1px solid white;\n"
-        "    color: white;\n"
-        "    font-family: \"Microsoft New Tai Lue\";\n"
-        "}\n"
-        "\n"
-        "QMenu {\n"
-        "    border: 1px solid white;\n"
-        "    background-color: rgb(51, 35, 75);\n"
-        "    color: white;\n"
-        "    font-family: \"Microsoft New Tai Lue\";\n"
-        "    selection-background-color: #000;\n"
-        "    selection-color: #abe25f;\n"
-        "}\n"
-        "\n"
-        "QScrollBar {\n"
-        "    background: rgba(0, 0, 0, 0);\n"
-        "    padding: 1px;\n"
-        "    width: 9px;\n"
-        "}\n"
-        "\n"
-        "QScrollBar::handle {\n"
-        "    background: white;\n"
-        "    border: 1px solid white;\n"
-        "    border-radius: 3px;\n"
-        "}\n"
-        "\n"
-        "QScrollBar::add-page, QScrollBar::sub-page {\n"
-        "    background: rgba(0, 0, 0, 0);\n"
-        "}\n"
-        "\n"
-        "QScrollBar::sub-line, QScrollBar::add-line {\n"
-        "    height: 0;\n"
-        "}")
+                           "    background-color:#A054ED;\n"
+                           "}\n"
+                           "\n"
+                           "QWidget {\n"
+                           "    outline: none;\n"
+                           "}\n"
+                           "\n"
+                           "QMenuBar {\n"
+                           "    background-color: rgb(56, 40, 80);\n"
+                           "    border-bottom: 1px solid white;\n"
+                           "    color: white;\n"
+                           "    font-family: \"Microsoft New Tai Lue\";\n"
+                           "}\n"
+                           "\n"
+                           "QMenu {\n"
+                           "    border: 1px solid white;\n"
+                           "    background-color: rgb(51, 35, 75);\n"
+                           "    color: white;\n"
+                           "    font-family: \"Microsoft New Tai Lue\";\n"
+                           "    selection-background-color: #000;\n"
+                           "    selection-color: #abe25f;\n"
+                           "}\n"
+                           "\n"
+                           "QScrollBar {\n"
+                           "    background: rgba(0, 0, 0, 0);\n"
+                           "    padding: 1px;\n"
+                           "    width: 9px;\n"
+                           "}\n"
+                           "\n"
+                           "QScrollBar::handle {\n"
+                           "    background: white;\n"
+                           "    border: 1px solid white;\n"
+                           "    border-radius: 3px;\n"
+                           "}\n"
+                           "\n"
+                           "QScrollBar::add-page, QScrollBar::sub-page {\n"
+                           "    background: rgba(0, 0, 0, 0);\n"
+                           "}\n"
+                           "\n"
+                           "QScrollBar::sub-line, QScrollBar::add-line {\n"
+                           "    height: 0;\n"
+                           "}")
 
         self.centralwidget = QtWidgets.QWidget(self)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
@@ -232,24 +391,24 @@ class Client(QtWidgets.QMainWindow):
 
         # Buttons, containers CSS
         self.centralwidget.setStyleSheet("QPushButton, QPlainTextEdit {\n"
-"    background-color: rgb(56, 40, 80);\n"
-"    color: white;\n"
-"    font-weight: bold;\n"
-"}\n"
-"\n"
-"QGroupBox {\n"
-"    color: white;\n"
-"    font-weight: bold;\n"
-"}\n"
-"\n"
-"QLineEdit {\n"
-"    border: 1px solid white;\n"
-"    border-radius: 4px;\n"
-"}\n"
-"\n"
-"QWidget {\n"
-"    font-family: \"Microsoft New Tai Lue\";\n"
-"}")
+                                         "    background-color: rgb(56, 40, 80);\n"
+                                         "    color: white;\n"
+                                         "    font-weight: bold;\n"
+                                         "}\n"
+                                         "\n"
+                                         "QGroupBox {\n"
+                                         "    color: white;\n"
+                                         "    font-weight: bold;\n"
+                                         "}\n"
+                                         "\n"
+                                         "QLineEdit {\n"
+                                         "    border: 1px solid white;\n"
+                                         "    border-radius: 4px;\n"
+                                         "}\n"
+                                         "\n"
+                                         "QWidget {\n"
+                                         "    font-family: \"Microsoft New Tai Lue\";\n"
+                                         "}")
 
         self.centralwidget.setObjectName("centralwidget")
         self.gridLayout = QtWidgets.QGridLayout(self.centralwidget)
@@ -306,24 +465,24 @@ class Client(QtWidgets.QMainWindow):
 
         # List and item CSS
         self.userList.setStyleSheet("QListView {\n"
-"    background-color: rgb(56, 40, 80);\n"
-"    color: white;\n"
-"    selection-color: white;\n"
-"}\n"
-"\n"
-"#userList::item:hover {\n"
-"    border: 1px solid rgb(56, 40, 80);\n"
-"    border-radius: 5px;\n"
-"    background-color: #A054ED;\n"
-"}\n"
-"\n"
-"#userList::item:selected {\n"
-"    border: 1px solid rgb(56, 40, 80);\n"
-"    border-radius:5px;\n"
-"    background-color: #000;\n"
-"}\n"
-"\n"
-"")
+                                    "    background-color: rgb(56, 40, 80);\n"
+                                    "    color: white;\n"
+                                    "    selection-color: white;\n"
+                                    "}\n"
+                                    "\n"
+                                    "#userList::item:hover {\n"
+                                    "    border: 1px solid rgb(56, 40, 80);\n"
+                                    "    border-radius: 5px;\n"
+                                    "    background-color: #A054ED;\n"
+                                    "}\n"
+                                    "\n"
+                                    "#userList::item:selected {\n"
+                                    "    border: 1px solid rgb(56, 40, 80);\n"
+                                    "    border-radius:5px;\n"
+                                    "    background-color: #000;\n"
+                                    "}\n"
+                                    "\n"
+                                    "")
 
         self.userList.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self.userList.setTabKeyNavigation(False)
@@ -350,18 +509,18 @@ class Client(QtWidgets.QMainWindow):
 
         # Room selection CSS
         self.chatroomComboBox.setStyleSheet("QComboBox {\n"
-"    background-color: rgb(56, 40, 80);\n"
-"    selection-background-color: rgb(56, 40, 80);\n"
-"    color: white;\n"
-"}\n"
-"\n"
-"QListView {\n"
-"    background-color: rgb(56, 40, 80);\n"
-"    color: white;\n"
-"    selection-background-color: #000;\n"
-"    selection-color: #abe25f;\n"
-"    outline: none;\n"
-"}")
+                                            "    background-color: rgb(56, 40, 80);\n"
+                                            "    selection-background-color: rgb(56, 40, 80);\n"
+                                            "    color: white;\n"
+                                            "}\n"
+                                            "\n"
+                                            "QListView {\n"
+                                            "    background-color: rgb(56, 40, 80);\n"
+                                            "    color: white;\n"
+                                            "    selection-background-color: #000;\n"
+                                            "    selection-color: #abe25f;\n"
+                                            "    outline: none;\n"
+                                            "}")
 
         self.chatroomComboBox.setEditable(False)
         self.chatroomComboBox.setFrame(True)
@@ -388,8 +547,8 @@ class Client(QtWidgets.QMainWindow):
         sizePolicy.setHeightForWidth(self.msgListGroupBox.sizePolicy().hasHeightForWidth())
         self.msgListGroupBox.setSizePolicy(sizePolicy)
         self.msgListGroupBox.setStyleSheet("QWidget {\n"
-"    outline: none;\n"
-"}")
+                                           "    outline: none;\n"
+                                           "}")
         self.msgListGroupBox.setAlignment(QtCore.Qt.AlignCenter)
         self.msgListGroupBox.setObjectName("msgListGroupBox")
         self.gridLayout_2 = QtWidgets.QGridLayout(self.msgListGroupBox)
@@ -406,20 +565,20 @@ class Client(QtWidgets.QMainWindow):
 
         # Message container scrollbar CSS
         self.msgList.setStyleSheet("QListView {\n"
-"    background-color: rgb(56, 40, 80);\n"
-"    color: white;\n"
-"    alternate-background-color: white;\n"
-"}\n"
-"\n"
-"QFrame {\n"
-"    border: 1px solid white;\n"
-"    border-radius: 6px;\n"
-"    outline: None;\n"
-"}\n"
-"\n"
-"QScrollBar {\n"
-"    background-color: black;\n"
-"}")
+                                   "    background-color: rgb(56, 40, 80);\n"
+                                   "    color: white;\n"
+                                   "    alternate-background-color: white;\n"
+                                   "}\n"
+                                   "\n"
+                                   "QFrame {\n"
+                                   "    border: 1px solid white;\n"
+                                   "    border-radius: 6px;\n"
+                                   "    outline: None;\n"
+                                   "}\n"
+                                   "\n"
+                                   "QScrollBar {\n"
+                                   "    background-color: black;\n"
+                                   "}")
 
         self.msgList.setLineWidth(0)
         self.msgList.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -477,9 +636,9 @@ class Client(QtWidgets.QMainWindow):
         self.menubar = QtWidgets.QMenuBar(self)
         self.menubar.setGeometry(QtCore.QRect(0, 0, 578, 23))
         self.menubar.setStyleSheet("QMenuBar::item:selected {\n"
-"    background-color: #000;\n"
-"    color: #abe25f;\n"
-"}")
+                                   "    background-color: #000;\n"
+                                   "    color: #abe25f;\n"
+                                   "}")
         self.menubar.setDefaultUp(False)
         self.menubar.setNativeMenuBar(True)
         self.menubar.setObjectName("menubar")
@@ -609,8 +768,9 @@ class Client(QtWidgets.QMainWindow):
             dl_thread.start()
             dl_thread.join()
 
-        ret_code = self.do_login()
+        ret_code = self.do_account_setup()
 
+        print("hi")
         if self.login_successful():
             self.stop_event = threading.Event()
             self.conn_thread = threading.Thread(target=self.connect)
@@ -644,20 +804,28 @@ class LoginDialog(QtWidgets.QDialog):
         if len(self.inputNickname.text()) > 0 and self.inputUsername.isEnabled():
             self.inputUsername.setEnabled(False)
             self.inputPassword.setEnabled(False)
+            self.inputEmail.setEnabled(False)
             self.buttonLoginRegister.setEnabled(False)
 
         elif len(self.inputNickname.text()) == 0 and not self.inputUsername.isEnabled():
             self.inputUsername.setEnabled(True)
             self.inputPassword.setEnabled(True)
+            self.inputEmail.setEnabled(True)
             self.buttonLoginRegister.setEnabled(True)
 
     def disable_anon_input(self):
-        if len(self.inputUsername.text() + self.inputPassword.text()) > 0 and self.inputNickname.isEnabled():
+        total_length = len(self.inputEmail.text() +
+                           self.inputPassword.text() +
+                           self.inputUsername.text())
+        if total_length > 0 and self.inputNickname.isEnabled():
             self.inputNickname.setEnabled(False)
             self.buttonAnon.setEnabled(False)
-        elif len(self.inputUsername.text() + self.inputPassword.text()) == 0:
+        elif total_length == 0:
             self.inputNickname.setEnabled(True)
             self.buttonAnon.setEnabled(True)
+
+    def display_username_input(self):
+        self.inputUsername.setVisible(not self.inputUsername.isVisible())
 
     def setup_ui(self):
         self.setObjectName("self")
@@ -710,7 +878,7 @@ class LoginDialog(QtWidgets.QDialog):
         self.gridLayout.addWidget(self.inputNickname, 6, 0, 1, 1)
         self.labelContAnon = QtWidgets.QLabel(self)
         self.labelContAnon.setStyleSheet("")
-        self.labelContAnon.setAlignment(QtCore.Qt.AlignHCenter|QtCore.Qt.AlignTop)
+        self.labelContAnon.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignTop)
         self.labelContAnon.setObjectName("labelContAnon")
         self.gridLayout.addWidget(self.labelContAnon, 2, 0, 1, 2)
         self.buttonLoginRegister = QtWidgets.QPushButton(self)
@@ -723,19 +891,28 @@ class LoginDialog(QtWidgets.QDialog):
         self.buttonLoginRegister.setSizePolicy(sizePolicy)
         self.buttonLoginRegister.setObjectName("buttonLoginRegister")
         self.gridLayout.addWidget(self.buttonLoginRegister, 7, 5, 1, 1)
+
+        self.inputEmail = QtWidgets.QLineEdit()
+        self.inputEmail.setObjectName("inputEmail")
+        self.inputEmail.setPlaceholderText("Email")
+        self.gridLayout.addWidget(self.inputEmail, 6, 4, 1, 2)
+
         self.inputUsername = QtWidgets.QLineEdit(self)
         self.inputUsername.setObjectName("inputUsername")
         self.inputUsername.setMaxLength(24)
-        self.gridLayout.addWidget(self.inputUsername, 6, 4, 1, 2)
+        self.gridLayout.addWidget(self.inputUsername, 5, 4, 1, 2)
         self.inputPassword = QtWidgets.QLineEdit(self)
+
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.inputPassword.sizePolicy().hasHeightForWidth())
+
         self.inputPassword.setSizePolicy(sizePolicy)
         self.inputPassword.setFrame(True)
         self.inputPassword.setEchoMode(QtWidgets.QLineEdit.Password)
         self.inputPassword.setObjectName("inputPassword")
+
         self.gridLayout.addWidget(self.inputPassword, 7, 4, 1, 1)
         spacerItem1 = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
         self.gridLayout.addItem(spacerItem1, 8, 0, 1, 1)
@@ -752,10 +929,6 @@ class LoginDialog(QtWidgets.QDialog):
         self.gridLayout.addWidget(self.toggleExistingAcc, 2, 4, 1, 2)
 
         self.retranslate_ui()
-        self.toggleExistingAcc.toggled.connect(self.toggle_register_button)
-        self.inputNickname.textEdited.connect(self.disable_account_inputs)
-        self.inputUsername.textEdited.connect(self.disable_anon_input)
-        self.inputPassword.textEdited.connect(self.disable_anon_input)
 
         QtCore.QMetaObject.connectSlotsByName(self)
 
@@ -771,6 +944,13 @@ class LoginDialog(QtWidgets.QDialog):
         self.inputUsername.setPlaceholderText(_translate("self", "Username"))
         self.inputPassword.setPlaceholderText(_translate("self", "Password"))
         self.toggleExistingAcc.setText(_translate("self", "Already got an account?            "))
+
+        self.inputNickname.setTabOrder(self.inputNickname, self.buttonAnon)
+        self.buttonAnon.setTabOrder(self.buttonAnon, self.toggleExistingAcc)
+        self.toggleExistingAcc.setTabOrder(self.toggleExistingAcc, self.inputUsername)
+        self.inputUsername.setTabOrder(self.inputUsername, self.inputEmail)
+        self.inputEmail.setTabOrder(self.inputEmail, self.inputPassword)
+        self.inputPassword.setTabOrder(self.inputPassword, self.buttonLoginRegister)
 
     def toggle_register_button(self):
         if self.buttonLoginRegister.text() == "Log in":
@@ -802,6 +982,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         Used for allowing shift-returning for new lines,
         and specific case-checking means that a new line
         isn't added to the next message after sending one.
+
         :param e:
         :return:
         """
@@ -816,6 +997,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         """
         Modifying the shiftPressed flag in use for
         shift-returning for new lines.
+
         :param e:
         :return:
         """
@@ -828,6 +1010,7 @@ class CustomDialog(QtWidgets.QDialog):
 
     def __init__(self, window_title, message):
         super().__init__()
+        self.close()
         self.window_title = window_title
         self.message = message
         self.setup_ui()
@@ -855,7 +1038,8 @@ class CustomDialog(QtWidgets.QDialog):
                            "#WINDOWTITLE {\n"
                            "	background-color:#A054ED;\n"
                            "}\n"
-                           "".replace("WINDOWTITLE", self.window_title))
+                           "".replace("WINDOWTITLE", self.window_title.replace(" ", "\\ ")))
+
         self.label = QtWidgets.QLabel(self)
         self.label.setObjectName(u"label")
         self.label.setGeometry(QtCore.QRect(70, 60, 161, 16))
@@ -871,6 +1055,7 @@ class CustomDialog(QtWidgets.QDialog):
 
 if __name__ == "__main__":
     import sys
+
     app = QtWidgets.QApplication(sys.argv)
 
     client = Client(
