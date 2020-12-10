@@ -44,9 +44,13 @@ def does_user_email_exist(email: str,
     return get_pw_hash_by("email", email) if return_pw_hash else fetch_user_data_by(email)
 
 
-def create_table(table_name):
-    CUR.execute("""CREATE TABLE IF NOT EXISTS ?
-    (uuid varchar(36), name varchar(24), friends text, pwhash text, rooms text)""", (table_name,))
+def create_table_if_not_exists(table_name):
+    if table_name == "accounts":
+        CUR.execute("""CREATE TABLE IF NOT EXISTS accounts
+        (uuid varchar(36), name varchar(24), pwhash text, friends text,
+        email text, blockedusers text, nickname text, status int,
+        friendrequests text, rooms text)""")
+        CONN.commit()
 
 
 def drop_table(table_name):

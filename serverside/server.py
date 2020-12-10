@@ -53,6 +53,8 @@ class Server(QtWidgets.QMainWindow):
     def __init__(self, host: str, port: int):
         super().__init__()
 
+        query.create_table_if_not_exists("accounts")
+
         self.conn = (host, port)
         self.clients = []
         self.host = host
