@@ -17,37 +17,9 @@ from utils.fmt import update_msg_list
 PORT = 65501
 HOST = socket.gethostbyname(socket.gethostname())
 
-test = """########## DB SHENANIGANS ###########
-
-db = sqlite3.connect("users.db")
-c = db.cursor()
-c.execute('''DROP TABLE accounts''')
-c.execute('''CREATE TABLE accounts
-(uuid CHAR(36), name text, friends text)''')
-c.execute('''INSERT INTO accounts (uuid, name, friends)
-VALUES ("ad5893b0-2cf8-2cc8-ead6-b0c1b5a71587", "Val", "B"),
-("wd1993b0-2cf8-2cc8-ead6-b0c1b5a71587", "B", "Val")''')
-db.commit()
-
-for row in c.execute('''SELECT * FROM accounts'''):
-    print(row)
-
-c.execute('''UPDATE accounts
-SET friends = friends || ' Test';''')
-#WHERE uuid = "ad5893b0-2cf8-2cc8-ead6-b0c1b5a71587"''')
-db.commit()
-
-for row in c.execute('''SELECT * FROM accounts'''):
-    print(row)
-
-
-db.close()
-
-#####################################
-"""
-
 
 class Server(QtWidgets.QMainWindow):
+
     SCKT_TYPE = Union[int, "HasFileNo"]
 
     def __init__(self, host: str, port: int):
@@ -181,7 +153,10 @@ class Server(QtWidgets.QMainWindow):
         # Outgoing data
         if mask & selectors.EVENT_WRITE:
             if data.outb:
-                to_send = pickle.loads(data.outb)
+                if isinstance(data.outb, bytes):
+                    to_send = pickle.loads(data.outb)
+                else:
+                    to_send = data.outb
                 sent = self.send_message(to_send)
                 print(f"ECHO: {to_send} to {data.addr}")
                 update_msg_list(self, to_send)
@@ -203,7 +178,8 @@ class Server(QtWidgets.QMainWindow):
 
         elif "create" in recv_content.keys():
             if recv_content["create"] == "user":
-                if isinstance(recv_content["data"], tuple):
+                if isinstance(pickle.loads(recv_content["data"]), tuple):
+                    recv_content["data"] = pickle.loads(recv_content["data"])
                     email = recv_content["data"][0]
                     username = recv_content["data"][1]
                     pw = recv_content["data"][2]
@@ -211,7 +187,7 @@ class Server(QtWidgets.QMainWindow):
                     email_exists = query.does_user_email_exist(email)
 
                     if email_exists:
-                        sock.sendall(pickle.dumps(None))
+                        sock.sendall(pickle.dumps(b""))
                     else:
                         new_user = User(nickname=username,
                                         registered_user=True)
@@ -370,9 +346,12 @@ class Server(QtWidgets.QMainWindow):
 
 
 if __name__ == "__main__":
-    import sys
+    try:
+        import sys
 
-    app = QtWidgets.QApplication(sys.argv)
-    server = Server(HOST, PORT)
-    server.show()
-    sys.exit(app.exec_())
+        app = QtWidgets.QApplication(sys.argv)
+        server = Server(HOST, PORT)
+        server.show()
+        sys.exit(app.exec_())
+    finally:
+        input()
