@@ -1,11 +1,14 @@
 def get_version() -> str:
-    f = open("version.txt", "r+")
-    contents = f.read()
-    f.close()
-    return contents
+    import pkgutil
+
+    v_bin = pkgutil.get_data("clientside", "version.txt")
+
+    return v_bin.decode("utf-8")
 
 
 def set_version(version: str):
-    f = open("version.txt", "w+")
+    import clientside
+
+    f = open(clientside.__file__[:-12] + "version.txt", "w")
     f.write(version)
     f.close()
