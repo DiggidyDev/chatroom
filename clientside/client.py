@@ -12,7 +12,7 @@ from PyQt5 import QtCore, QtWidgets, QtGui
 from clientside.user import User
 from utils import fmt, update
 
-HOST = "127.0.0.1"  # "18.217.109.81"  # AWS hosting the server
+HOST = "18.217.109.81"  # AWS hosting the server
 PORT = 65501  # Server listening to connections on this port
 
 
@@ -90,8 +90,8 @@ class Client(QtWidgets.QMainWindow):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             if self.socket:
                 self.socket.close()
-                s.connect((self.HOST, self.PORT))
-                self.socket = s
+            s.connect((self.HOST, self.PORT))
+            self.socket = s
 
             initialcontent = {
                 "content": "Initial connection.",
@@ -172,7 +172,7 @@ class Client(QtWidgets.QMainWindow):
 
                 _client.socket.sendall(pickle.dumps(email_q))
                 user_tuple = pickle.loads(_client.socket.recv(4096))
-                if user_tuple:
+                if user_tuple != b"":
                     pw = _client.login.inputPassword.text()
                     if _client.check_password(pw, user_tuple[1]):
                         _client.user = User(existing_data=user_tuple)
@@ -229,7 +229,7 @@ class Client(QtWidgets.QMainWindow):
                         "content": "Query",
                         "system-message": True,
                         "create": "user",
-                        "data": (_client.email, username, pw),
+                        "data": pickle.dumps((_client.email, username, pw)),
                         "datatype": "email, username, pw"
                     }
 
@@ -760,17 +760,15 @@ class Client(QtWidgets.QMainWindow):
         self.socket.sendall(pickle.dumps(tosend))
 
     def show(self):
-        if update.check_for_updates():
+
+        if update.is_update_available(True):
             from utils.update import start_download
 
-            dl_thread = threading.Thread(target=start_download)
-            dl_thread.setDaemon(True)
-            dl_thread.start()
-            dl_thread.join()
+            start_download()
 
-        ret_code = self.do_account_setup()
+        if not update.is_update_available():
+            ret_code = self.do_account_setup()
 
-        print("hi")
         if self.login_successful():
             self.stop_event = threading.Event()
             self.conn_thread = threading.Thread(target=self.connect)
@@ -1069,7 +1067,7 @@ if __name__ == "__main__":
         sys.exit(app.exec_())
     except Exception as e:
         print(e)
-        if hasattr(client, "socket"):
+        if client.socket:
             client.socket.close()
     finally:
         if client.kicked:
