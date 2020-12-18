@@ -12,11 +12,17 @@ def add_user(user: User, password):
     uuid = str(user.get_uuid())
     name = user.name
     email = user.get_email()
-    print(email)
     pwhash = hash_pw(password, uuid)
     CUR.execute("""INSERT INTO accounts (uuid, name, pwhash, email)
     VALUES (?, ?, ?, ?)""", (uuid, name, pwhash, email, ))
     CONN.commit()
+
+
+def is_username_available(username: str) -> bool:
+    CUR.execute("""SELECT name FROM accounts WHERE name = ?""", (username,))
+    record = CUR.fetchone()
+
+    return False if record else True
 
 
 def does_user_email_exist(email: str,
@@ -38,9 +44,9 @@ def does_user_email_exist(email: str,
     if return_uuid:
         return fetch_user_data_by("email", email)[1]
     if not return_uuid and not return_pw_hash:
-        for i in CUR.execute("SELECT email FROM accounts WHERE email = ?", (email,)):
-            return True
-        return False
+        CUR.execute("SELECT email FROM accounts WHERE email = ?", (email,))
+        record = CUR.fetchone()
+        return True if record else False
     return get_pw_hash_by("email", email) if return_pw_hash else fetch_user_data_by(email)
 
 
