@@ -1,6 +1,3 @@
-# TODO: INCLUDE TIMESTAMPED MESSAGE AT TOP OF CLIENT'S
-#       MESSAGE LIST
-# import datetime
 import hashlib
 import pickle
 import socket
@@ -27,6 +24,7 @@ class Client(QtWidgets.QMainWindow):
     # PEP-484
     # PEP-526
 
+    ERRS: Union[bool, None]
     HOST: str
     PORT: int
 
@@ -42,6 +40,7 @@ class Client(QtWidgets.QMainWindow):
         self.PORT = port
         self.HOST = host
 
+        self.ERRS = None
         self.email = None
         self.kicked = False
         self.socket = None
@@ -49,7 +48,16 @@ class Client(QtWidgets.QMainWindow):
 
         self.setup_ui()
 
-    def check_password(self, password: str, salt: str):
+    def check_password(self, password: str, salt: str) -> bool:
+        """
+        Compares the server-side hashed password and the hash for
+        the password the user just entered.
+
+        :param password: The user's input.
+        :param salt: The UUID of the user.
+        :return: A boolean indicating whether the hashes match.
+        """
+
         attempted_pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200000)
 
         pw_q = {
@@ -108,20 +116,21 @@ class Client(QtWidgets.QMainWindow):
                     if isinstance(data, bytes):
                         data = pickle.loads(data)
                     print(f"RECV: {data}")
-                    if data["system-message"]:
-                        if data["content"] == "You have been kicked.":
-                            # Modify kicked flag for showing kicked dialog on
-                            # connection abortion
-                            self.kicked = True
-                            self.stop_event.set()
-                            self.socket.close()
-                            self.close()  # Close the current window
-                        elif "Initial connection." in data["content"]:
-                            item = QtWidgets.QListWidgetItem()
-                            item.setText(f"{data['user']}")
-                            self.userList.addItem(item)
+                    if isinstance(data, dict):
+                        if data["system-message"]:
+                            if data["content"] == "You have been kicked.":
+                                # Modify kicked flag for showing kicked dialog on
+                                # connection abortion
+                                self.kicked = True
+                                self.stop_event.set()
+                                self.socket.close()
+                                self.close()  # Close the current window
+                            elif "Initial connection." in data["content"]:
+                                item = QtWidgets.QListWidgetItem()
+                                item.setText(f"{data['user']}")
+                                self.userList.addItem(item)
 
-                    fmt.update_msg_list(self, data)
+                        fmt.update_msg_list(self, data)
 
     def create_anon_user(self):
         if self.login.buttonAnon.hasFocus() or self.login.inputNickname.hasFocus():
@@ -172,15 +181,17 @@ class Client(QtWidgets.QMainWindow):
 
                 _client.socket.sendall(pickle.dumps(email_q))
                 user_tuple = pickle.loads(_client.socket.recv(4096))
-                if user_tuple != b"":
+                print(user_tuple)
+                if user_tuple is not None:
                     pw = _client.login.inputPassword.text()
                     if _client.check_password(pw, user_tuple[1]):
                         _client.user = User(existing_data=user_tuple)
-                        print("HURRAH!")
                     else:
                         _client.email = None
+                        _client.ERRS = "password"
                 else:
                     _client.email = None
+                    _client.ERRS = "username"
 
             c_thread = threading.Thread(target=_do_user_login,
                                         args=[self])
@@ -219,7 +230,7 @@ class Client(QtWidgets.QMainWindow):
                 _client.socket.sendall(pickle.dumps(existing_user_q))
                 email_was_found = pickle.loads(_client.socket.recv(4096))
 
-                if email_was_found:
+                if email_was_found == "":
                     _client.email = None
                 else:
                     pw = _client.login.inputPassword.text()
@@ -236,7 +247,10 @@ class Client(QtWidgets.QMainWindow):
                     _client.socket.sendall(pickle.dumps(register_user_q))
                     registered_user = pickle.loads(_client.socket.recv(4096))
 
-                    if registered_user:
+                    if registered_user in ["email", "username"]:
+                        _client.ERRS = registered_user
+                        _client.email = None
+                    else:
                         _client.user = registered_user
 
             c_thread = threading.Thread(target=_register_user,
@@ -248,27 +262,46 @@ class Client(QtWidgets.QMainWindow):
     def inspect_button(self):
         if self.login.buttonLoginRegister.text() == "Log in":
             self.do_login()
+            if self.ERRS == "password":
+                errdialog = CustomDialog("Login Failed",
+                                         "Incorrect password")
+            elif self.ERRS == "username":
+                errdialog = CustomDialog("Login Failed",
+                                         "Account with that email not found")
         else:
             self.do_registration()
+            if self.ERRS in ["email", "username"]:
+                errdialog = CustomDialog("Registration Failed",
+                                         f"An account with that "
+                                         f"{self.ERRS} already exists.")
+        if self.ERRS:
+            errdialog.exec_()
+            self.ERRS = None
         if self.login_successful():
             self.socket.close()
             self.login.close()
-        else:
-            if self.login.buttonLoginRegister.text() == "Log in":
-                errdialog = CustomDialog("Incorrect Login",
-                                         "wrong credentials! pls try agen :')")
-            else:
-                errdialog = CustomDialog("User already exists",
-                                         "user exists, you numbnut! pls try agen :)")
-            errdialog.exec_()
 
     def login_successful(self) -> bool:
+        """
+        Detects whether a user's account has been found
+        (anonymous and registered users), or whether an
+        email has been found (registered users).
+
+        :return: A boolean indicating the current login status.
+        """
         return any(condition is not None for condition in [
             self.email,
             self.user
         ])
 
-    def on_key(self):
+    def on_key(self) -> None:
+        """
+        Resets the message box when a message
+        has been sent, signalling to the user
+        that it's been dealt with.
+
+        :return:
+        """
         msg = self.sendMsgBox.toPlainText()
 
         if self.sendMsgBox.hasFocus() and \
@@ -1040,6 +1073,7 @@ class CustomDialog(QtWidgets.QDialog):
 
         self.label = QtWidgets.QLabel(self)
         self.label.setObjectName(u"label")
+        self.label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignTop)
         self.label.setGeometry(QtCore.QRect(70, 60, 161, 16))
         self.pushButton = QtWidgets.QPushButton(self)
         self.pushButton.setObjectName(u"pushButton")
