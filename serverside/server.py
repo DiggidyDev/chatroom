@@ -19,8 +19,7 @@ HOST = socket.gethostbyname(socket.gethostname())
 
 
 class Server(QtWidgets.QMainWindow):
-
-    SCKT_TYPE = Union[int, "HasFileNo"]
+    SCKT_TYPE = Union[int, "HasFileno"]
 
     def __init__(self, host: str, port: int):
         super().__init__()
@@ -104,8 +103,10 @@ class Server(QtWidgets.QMainWindow):
                 elif isinstance(v, User) and str(v) == value:
                     return client
 
-    def handle_conn(self, key, mask):
-        sock = key.fileobj
+    def handle_conn(self,
+                    key: selectors.SelectorKey,
+                    mask: int):
+        sock: Union[Server.SCKT_TYPE, socket.socket] = key.fileobj
         data = key.data
 
         # Incoming data
@@ -113,13 +114,15 @@ class Server(QtWidgets.QMainWindow):
             recv_bytes = None
             try:
                 recv_bytes = sock.recv(4096)
-            except:
+            except Exception as e:
+                print(e)
                 print(f"Closing connection with {data.addr}")
                 client = self.get_client_by("conn", sock)
                 self.userList.takeItem(self.clients.index(client))
                 self.sel.unregister(sock)  # No longer monitored by the selector
                 sock.close()
                 self.clients.remove(client)
+
                 if client['user'] is not None:
                     self.send_message(f"{client['user']} left.")
                     update_msg_list(self, fmt.content(content=f"{client['user']} left.",
@@ -147,7 +150,11 @@ class Server(QtWidgets.QMainWindow):
                         item.setText(f"{sender}")
                         self.get_client_by("conn", sock)["user"] = sender
                         self.userList.addItem(item)
-                        print("yes")
+
+                        # SEND CURRENT LIST OF USERS IN CHATROOM
+                        sock.send(pickle.dumps(
+                            []
+                        ))
                 data.outb += recv_bytes if "Query" not in recv_content["content"] else b""
 
         # Outgoing data
@@ -181,19 +188,24 @@ class Server(QtWidgets.QMainWindow):
                 if isinstance(pickle.loads(recv_content["data"]), tuple):
                     recv_content["data"] = pickle.loads(recv_content["data"])
                     email = recv_content["data"][0]
-                    username = recv_content["data"][1]
-                    pw = recv_content["data"][2]
 
                     email_exists = query.does_user_email_exist(email)
-
                     if email_exists:
-                        sock.sendall(pickle.dumps(b""))
-                    else:
-                        new_user = User(nickname=username,
-                                        registered_user=True)
-                        new_user.set_email(email)
-                        query.add_user(new_user, password=pw)
-                        sock.sendall(pickle.dumps(new_user))
+                        sock.sendall(pickle.dumps("email"))
+                        return
+
+                    username = recv_content["data"][1]
+                    username_available = query.is_username_available(username)
+                    if not username_available:
+                        sock.sendall(pickle.dumps("username"))
+                        return
+
+                    pw = recv_content["data"][2]
+                    new_user = User(nickname=username,
+                                    registered_user=True)
+                    new_user.set_email(email)
+                    query.add_user(new_user, password=pw)
+                    sock.sendall(pickle.dumps(new_user))
 
     def kick(self):
         current_user = self.userList.currentItem()
@@ -242,7 +254,7 @@ class Server(QtWidgets.QMainWindow):
                               user=self.user)
         print(msg["user"])
         if client:
-                sent = client["conn"].send(pickle.dumps(msg))
+            sent = client["conn"].send(pickle.dumps(msg))
         elif not client:
             for c in self.clients:
                 sent = c["conn"].send(pickle.dumps(msg))
