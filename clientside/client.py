@@ -13,6 +13,22 @@ HOST = "18.217.109.81"  # AWS hosting the server
 PORT = 65501  # Server listening to connections on this port
 
 
+class ListWidget(QtWidgets.QListWidget):
+    """
+    A solution proposed by the following reference:
+    https://stackoverflow.com/questions/2049849/why-cant-i-pickle-this-object
+    """
+
+    def __init__(self, parent):
+        super(ListWidget, self).__init__(parent)
+
+    def __getstate__(self):
+        return self.__dict__
+
+    def __setstate__(self, d):
+        self.__dict__.update(d)
+
+
 class Client(QtWidgets.QMainWindow):
     """
     The main client interface with which the
@@ -24,7 +40,7 @@ class Client(QtWidgets.QMainWindow):
     # PEP-484
     # PEP-526
 
-    ERRS: Union[bool, None]
+    ERRS: Union[str, None]
     HOST: str
     PORT: int
 
@@ -125,10 +141,8 @@ class Client(QtWidgets.QMainWindow):
                                 self.stop_event.set()
                                 self.socket.close()
                                 self.close()  # Close the current window
-                            elif "Initial connection." in data["content"]:
-                                item = QtWidgets.QListWidgetItem()
-                                item.setText(f"{data['user']}")
-                                self.userList.addItem(item)
+                            else:
+                                fmt.update_user_list(self, data)
 
                         fmt.update_msg_list(self, data)
 
@@ -181,7 +195,6 @@ class Client(QtWidgets.QMainWindow):
 
                 _client.socket.sendall(pickle.dumps(email_q))
                 user_tuple = pickle.loads(_client.socket.recv(4096))
-                print(user_tuple)
                 if user_tuple is not None:
                     pw = _client.login.inputPassword.text()
                     if _client.check_password(pw, user_tuple[1]):
