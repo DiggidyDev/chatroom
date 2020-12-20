@@ -152,10 +152,11 @@ class Server(QtWidgets.QMainWindow):
                         self.userList.addItem(item)
 
                         # SEND CURRENT LIST OF USERS IN CHATROOM
-                        sock.send(pickle.dumps(
-                            []
-                        ))
-                data.outb += recv_bytes if "Query" not in recv_content["content"] else b""
+                        # fix pickling errors :/
+                        recv_content["userlist"] = [
+                            self.userList.item(x).text() for x in range(self.userList.count())
+                        ]
+                data.outb += pickle.dumps(recv_content) if "Query" not in recv_content["content"] else b""
 
         # Outgoing data
         if mask & selectors.EVENT_WRITE:
@@ -172,7 +173,8 @@ class Server(QtWidgets.QMainWindow):
                 except:
                     print("oh no")
 
-    def handle_query(self, recv_content: dict, sock: socket.socket):
+    @staticmethod
+    def handle_query(recv_content: dict, sock: socket.socket):
         if "get" in recv_content.keys():
             if recv_content["get"] == "user":
                 user_tuple = query.fetch_user_data_by(recv_content["datatype"],
