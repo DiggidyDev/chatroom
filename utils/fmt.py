@@ -25,7 +25,8 @@ def hash_pw(password: str, uuid: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), uuid.encode("utf-8"), 200000).hex()
 
 
-def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
+def update_msg_list(widget: QtWidgets.QMainWindow,
+                    received: dict):
     if "user" in received.keys():
         item = QtWidgets.QListWidgetItem()
         if isinstance(received, bytes):
@@ -49,7 +50,7 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
                 item.setText(received["content"])
         elif not received['system-message']:
             # EXPLICIT FILTER
-            item.setText(f"{sender}: {received['content'].replace('fuck', '****')}")
+            item.setText(f"{sender}: {received['content'].lower().replace('fuck', '****')}")
 
         item.setToolTip(fr"""Timestamp: {currentTime.strftime("%Y/%m/%d - %H:%M:%S")}
     UUID: {received['user'].get_uuid() if received['user'] != 'Server' else None}""".strip())
@@ -59,6 +60,34 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
             return
 
         widget.msgList.scrollToBottom()
+
+
+def update_user_list(widget: QtWidgets.QMainWindow,
+                     recv_content: dict):
+    if recv_content["content"] == "Initial connection.":
+        new_user = recv_content["user"]
+        server_user_list: list = recv_content["userlist"]
+        if new_user.name == widget.user.name:
+            for user in server_user_list:
+                uitem = QtWidgets.QListWidgetItem()
+                uitem.setText(user)
+                widget.userList.addItem(uitem)
+        else:
+            uitem = QtWidgets.QListWidgetItem()
+            uitem.setText(new_user.name)
+            widget.userList.addItem(uitem)
+    elif recv_content["content"].endswith(" was kicked."):
+        kicked_user = recv_content["content"][:-12]
+        if hasattr(widget, "userList"):
+            widget.userList.takeItem([
+                widget.userList.item(i).text() for i in range(widget.userList.count())
+            ].index(kicked_user))
+    elif recv_content["content"].endswith(" left."):
+        left_user = recv_content["content"][:-6]
+        if hasattr(widget, "userList"):
+            widget.userList.takeItem([
+                                         widget.userList.item(i).text() for i in range(widget.userList.count())
+                                     ].index(left_user))
 
 
 def is_valid_email(email: str) -> re.Match:
