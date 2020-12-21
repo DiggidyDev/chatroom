@@ -2,20 +2,24 @@ import hashlib
 import pickle
 import re
 from datetime import datetime
+from clientside.user import User
 
 from PyQt5 import QtWidgets
 
 
-def content(**kwargs):
+def content(*, message_content: str, system_message: bool, user: User):
     """
-    Correctly format content for outgoing
-    :param kwargs:
-    :return:
+    [ADD DOCSTRING]
+    
+    :param message_content: 
+    :param system_message: 
+    :param user: 
+    :return: 
     """
     struct = {
-        "content": kwargs["content"],
-        "system-message": kwargs["system_message"],
-        "user": kwargs["user"]
+        "content": message_content,
+        "system-message": system_message,
+        "user": user
     }
 
     return struct
