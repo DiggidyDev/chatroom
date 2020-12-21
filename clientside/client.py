@@ -6,27 +6,14 @@ from typing import Union
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 
+from clientside.actionslots import HelpSlots
 from clientside.user import User
+from ui.info import CustomDialog
 from utils import fmt, update
+
 
 HOST = "18.217.109.81"  # AWS hosting the server
 PORT = 65501  # Server listening to connections on this port
-
-
-class ListWidget(QtWidgets.QListWidget):
-    """
-    A solution proposed by the following reference:
-    https://stackoverflow.com/questions/2049849/why-cant-i-pickle-this-object
-    """
-
-    def __init__(self, parent):
-        super(ListWidget, self).__init__(parent)
-
-    def __getstate__(self):
-        return self.__dict__
-
-    def __setstate__(self, d):
-        self.__dict__.update(d)
 
 
 class Client(QtWidgets.QMainWindow):
@@ -44,9 +31,11 @@ class Client(QtWidgets.QMainWindow):
     HOST: str
     PORT: int
 
+    conn_thread: threading.Thread
     kicked: bool
     login: "LoginDialog"
     socket: Union[socket.socket, None]
+    stop_event: threading.Event
     user: Union[User, None]
 
     def __init__(self, host, port):
@@ -93,14 +82,17 @@ class Client(QtWidgets.QMainWindow):
     def check_fields(self) -> bool:
         if len(self.login.inputUsername.text().strip()) == 0 and \
                 self.login.inputUsername.isVisible():
-            errdialog = CustomDialog("Username", "Please enter your username")
+            errdialog = CustomDialog(window_title="Username",
+                                     message="Please enter your username")
         elif len(self.login.inputEmail.text().strip()) == 0:
-            errdialog = CustomDialog("Email", "Please enter your email")
+            errdialog = CustomDialog(window_title="Email",
+                                     message="Please enter your email")
         elif len(self.login.inputPassword.text().strip()) == 0:
-            errdialog = CustomDialog("Password", "Please enter your password")
+            errdialog = CustomDialog(window_title="Password",
+                                     message="Please enter your password")
         elif not fmt.is_valid_email(self.login.inputEmail.text()):
-            errdialog = CustomDialog("Email",
-                                     "Please enter a valid email address")
+            errdialog = CustomDialog(window_title="Email",
+                                     message="Please enter a valid email address")
         else:
             return True
         errdialog.exec_()
@@ -153,11 +145,12 @@ class Client(QtWidgets.QMainWindow):
                 print(self.user.get_uuid())
                 self.login.close()
             elif len(self.login.inputNickname.text().strip()) == 0:
-                errdialog = CustomDialog("Error", "Please enter a nickname")
+                errdialog = CustomDialog(window_title="Error",
+                                         message="Please enter a nickname")
                 errdialog.exec_()
 
     @property
-    def currentRoom(self):
+    def current_room(self):
         return self.chatroomComboBox.currentText()
 
     def do_account_setup(self):
@@ -273,21 +266,23 @@ class Client(QtWidgets.QMainWindow):
             c_thread.join()
 
     def inspect_button(self):
+        errdialog: Union[None, CustomDialog] = None
+
         if self.login.buttonLoginRegister.text() == "Log in":
             self.do_login()
             if self.ERRS == "password":
-                errdialog = CustomDialog("Login Failed",
-                                         "Incorrect password")
+                errdialog = CustomDialog(window_title="Login Failed",
+                                         message="Incorrect password")
             elif self.ERRS == "username":
-                errdialog = CustomDialog("Login Failed",
-                                         "Account with that email not found")
+                errdialog = CustomDialog(window_title="Login Failed",
+                                         message="Account with that email not found")
         else:
             self.do_registration()
             if self.ERRS in ["email", "username"]:
-                errdialog = CustomDialog("Registration Failed",
-                                         f"An account with that "
+                errdialog = CustomDialog(window_title="Registration Failed",
+                                         message=f"An account with that "
                                          f"{self.ERRS} already exists.")
-        if self.ERRS:
+        if self.ERRS and errdialog:
             errdialog.exec_()
             self.ERRS = None
         if self.login_successful():
@@ -501,6 +496,7 @@ class Client(QtWidgets.QMainWindow):
         self.friendButton.setFlat(False)
         self.friendButton.setObjectName("friendButton")
         self.usersGridLayout.addWidget(self.friendButton, 1, 0, 1, 1)
+
         self.userList = QtWidgets.QListWidget(self.usersGroupBox)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
@@ -591,6 +587,7 @@ class Client(QtWidgets.QMainWindow):
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.msgListGroupBox.sizePolicy().hasHeightForWidth())
+
         self.msgListGroupBox.setSizePolicy(sizePolicy)
         self.msgListGroupBox.setStyleSheet("QWidget {\n"
                                            "    outline: none;\n"
@@ -754,8 +751,10 @@ class Client(QtWidgets.QMainWindow):
         self.reportABug.setObjectName("reportABug")
         self.toggleExplicitLanguageFilter = QtWidgets.QAction(self)
         self.toggleExplicitLanguageFilter.setObjectName("toggleExplicitLanguageFilter")
+
         self.aboutChatroom = QtWidgets.QAction(self)
         self.aboutChatroom.setObjectName("aboutChatroom")
+        self.aboutChatroom.triggered.connect(HelpSlots.about_chatroom)
 
         self.menuThemes.addAction(self.theme1)
         self.menuThemes.addAction(self.theme2)
@@ -801,11 +800,17 @@ class Client(QtWidgets.QMainWindow):
         self.setTabOrder(self.chatroomComboBox, self.pushButton)
 
     def send_message(self, content):
-        tosend = fmt.content(content=content, system_message=False, user=self.user)
+        tosend = fmt.content(message_content=content, system_message=False, user=self.user)
         print(tosend)
         self.socket.sendall(pickle.dumps(tosend))
 
     def show(self):
+        """
+        Overriding the default show method from QMainWindow
+        for some prerequisite checks
+        :return:
+        """
+        ret_code = 1
 
         if update.is_update_available(True):
             from utils.update import start_download
@@ -922,7 +927,7 @@ class LoginDialog(QtWidgets.QDialog):
         self.gridLayout.addWidget(self.inputNickname, 6, 0, 1, 1)
         self.labelContAnon = QtWidgets.QLabel(self)
         self.labelContAnon.setStyleSheet("")
-        self.labelContAnon.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignTop)
+        self.labelContAnon.setAlignment(QtCore.Qt.AlignCenter)
         self.labelContAnon.setObjectName("labelContAnon")
         self.gridLayout.addWidget(self.labelContAnon, 2, 0, 1, 2)
         self.buttonLoginRegister = QtWidgets.QPushButton(self)
@@ -1021,81 +1026,33 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         self.sendmsg.connect(self.mainWindow.on_key)
         self.shiftPressed = False
 
-    def keyPressEvent(self, e: QtGui.QKeyEvent) -> None:
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """
         Used for allowing shift-returning for new lines,
         and specific case-checking means that a new line
         isn't added to the next message after sending one.
 
-        :param e:
+        :param event:
         :return:
         """
-        if not self.shiftPressed and e.key() == QtCore.Qt.Key_Shift:
+        if not self.shiftPressed and event.key() == QtCore.Qt.Key_Shift:
             self.shiftPressed = True
-        elif not self.shiftPressed and e.key() == QtCore.Qt.Key_Return:
-            self.sendmsg.emit(e.key())
+        elif not self.shiftPressed and event.key() == QtCore.Qt.Key_Return:
+            self.sendmsg.emit(event.key())
         else:
-            super().keyPressEvent(e)
+            super().keyPressEvent(event)
 
-    def keyReleaseEvent(self, e: QtGui.QKeyEvent) -> None:
+    def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         """
         Modifying the shiftPressed flag in use for
         shift-returning for new lines.
 
-        :param e:
+        :param event:
         :return:
         """
-        if e.key() == QtCore.Qt.Key_Shift:
+        if event.key() == QtCore.Qt.Key_Shift:
             self.shiftPressed = False
-        super().keyReleaseEvent(e)
-
-
-class CustomDialog(QtWidgets.QDialog):
-
-    def __init__(self, window_title, message):
-        super().__init__()
-        self.close()
-        self.window_title = window_title
-        self.message = message
-        self.setup_ui()
-
-    def retranslateUi(self):
-        self.setWindowTitle(QtCore.QCoreApplication.translate(self.window_title, self.window_title, None))
-        self.label.setText(QtCore.QCoreApplication.translate(self.window_title, self.message, None))
-        self.pushButton.setText(QtCore.QCoreApplication.translate(self.window_title, "OK", None))
-        self.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
-
-    def setup_ui(self):
-        if not self.objectName():
-            self.setObjectName(self.window_title)
-        self.resize(304, 181)
-        self.setMinimumSize(QtCore.QSize(304, 181))
-        self.setMaximumSize(QtCore.QSize(304, 181))
-        self.setStyleSheet("QPushButton, QPlainTextEdit {\n"
-                           "	background-color: rgb(56, 40, 80);\n"
-                           "	color: white;\n"
-                           "	font-weight: bold;\n"
-                           "}\n"
-                           "QLabel {\n"
-                           "    color: white;\n"
-                           "}"
-                           "#WINDOWTITLE {\n"
-                           "	background-color:#A054ED;\n"
-                           "}\n"
-                           "".replace("WINDOWTITLE", self.window_title.replace(" ", "\\ ")))
-
-        self.label = QtWidgets.QLabel(self)
-        self.label.setObjectName(u"label")
-        self.label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignTop)
-        self.label.setGeometry(QtCore.QRect(70, 60, 161, 16))
-        self.pushButton = QtWidgets.QPushButton(self)
-        self.pushButton.setObjectName(u"pushButton")
-        self.pushButton.setGeometry(QtCore.QRect(110, 120, 75, 23))
-        self.pushButton.clicked.connect(self.close)
-
-        self.retranslateUi()
-
-        QtCore.QMetaObject.connectSlotsByName(self)
+        super().keyReleaseEvent(event)
 
 
 if __name__ == "__main__":
@@ -1118,7 +1075,8 @@ if __name__ == "__main__":
             client.socket.close()
     finally:
         if client.kicked:
-            kickWindow = CustomDialog("Kicked", "You were kicked from the server.")
+            kickWindow = CustomDialog(window_title="Kicked",
+                                      message="You were kicked from the server.")
             kickWindow.show()
 
             sys.exit(app.exec_())
