@@ -1,15 +1,16 @@
 from PyQt5 import QtWidgets, QtCore
 
-
 # TODO: Auto-update ZIP
 
 # Set the current application's download type
 # based on the modules available to be imported
 try:
     from utils.versionbin import get_version, set_version
+
     DL_TYPE = "exe"
 except ImportError:
     from utils.versionzip import get_version, set_version
+
     DL_TYPE = "zip"
 
 
@@ -30,6 +31,7 @@ def is_update_available(show_window: bool = False) -> bool:
 
     if get_live_version() != get_version():
         return True
+
     return False
 
 
@@ -136,9 +138,7 @@ class ProgressWindow(QtWidgets.QDialog):
         self.resize(289, 225)
         self.setMinimumSize(QtCore.QSize(289, 225))
         self.setMaximumSize(QtCore.QSize(289, 225))
-        #icon = QtGui.QIcon()
-        #icon.addFile(u"../../AppData/PycharmProjects/Computing Project/assets/window_icon.ico", QSize(), QIcon.Normal, QIcon.Off)
-        #self.setWindowIcon(icon)
+
         self.setStyleSheet(u"#self {\n"
 "	background-color:#A054ED;\n"
 "}\n"
