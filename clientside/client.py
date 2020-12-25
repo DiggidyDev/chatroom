@@ -1,19 +1,19 @@
 import hashlib
-import pickle
+import jsons
 import socket
 import threading
 from typing import Union
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 
-from clientside.actionslots import HelpSlots
 from clientside.user import User
 from ui.info import CustomDialog
 from utils import fmt, update
 
-
 HOST = "18.217.109.81"  # AWS hosting the server
 PORT = 65501  # Server listening to connections on this port
+
+NULL_BYTE = "\x00"
 
 
 class Client(QtWidgets.QMainWindow):
@@ -32,9 +32,11 @@ class Client(QtWidgets.QMainWindow):
     PORT: int
 
     conn_thread: threading.Thread
+    current_font: QtGui.QFont
+    default_font: QtGui.QFont
     kicked: bool
     login: "LoginDialog"
-    socket: Union[socket.socket, None]
+    _socket: Union[socket.socket, None]
     stop_event: threading.Event
     user: Union[User, None]
 
@@ -44,14 +46,22 @@ class Client(QtWidgets.QMainWindow):
         self.ADDRESS = (host, port)
         self.PORT = port
         self.HOST = host
-
         self.ERRS = None
+
+        self.current_font = QtGui.QFont()
+        self.current_font.setFamily("Microsoft New Tai Lue")
+        self.default_font = QtGui.QFont()
+        self.default_font.setFamily("Microsoft New Tai Lue")
         self.email = None
         self.kicked = False
-        self.socket = None
+        self._socket = None
         self.user = None
 
         self.setup_ui()
+
+    def _send(self, sock: socket.socket, data: bytes) -> None:
+        sock.sendall((str(len(data)) + NULL_BYTE).encode("utf-8"))
+        sock.sendall(data)
 
     def check_password(self, password: str, salt: str) -> bool:
         """
@@ -73,9 +83,9 @@ class Client(QtWidgets.QMainWindow):
             "get": "password"
         }
 
-        self.socket.sendall(pickle.dumps(pw_q))
+        self._send(self._socket, fmt.encode_str(pw_q))
 
-        pw_hash = pickle.loads(self.socket.recv(4096))
+        pw_hash = fmt.decode_bytes(self._socket.recv(4096))
 
         return attempted_pw_hash.hex() == pw_hash
 
@@ -104,10 +114,10 @@ class Client(QtWidgets.QMainWindow):
 
     def connect(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if self.socket:
-                self.socket.close()
+            if self._socket:
+                self._socket.close()
             s.connect((self.HOST, self.PORT))
-            self.socket = s
+            self._socket = s
 
             initialcontent = {
                 "content": "Initial connection.",
@@ -115,14 +125,14 @@ class Client(QtWidgets.QMainWindow):
                 "user": self.user
             }
 
-            s.sendall(pickle.dumps(initialcontent))
+            self._send(self._socket, fmt.encode_str(initialcontent))
 
             while not self.stop_event.is_set():
                 recv_data = s.recv(4096)
                 if recv_data:
-                    data = pickle.loads(recv_data)
+                    data = fmt.decode_bytes(recv_data)
                     if isinstance(data, bytes):
-                        data = pickle.loads(data)
+                        data = fmt.decode_bytes(data)
                     print(f"RECV: {data}")
                     if isinstance(data, dict):
                         if data["system-message"]:
@@ -131,7 +141,7 @@ class Client(QtWidgets.QMainWindow):
                                 # connection abortion
                                 self.kicked = True
                                 self.stop_event.set()
-                                self.socket.close()
+                                self._socket.close()
                                 self.close()  # Close the current window
                             else:
                                 fmt.update_user_list(self, data)
@@ -141,7 +151,7 @@ class Client(QtWidgets.QMainWindow):
     def create_anon_user(self):
         if self.login.buttonAnon.hasFocus() or self.login.inputNickname.hasFocus():
             if len(self.login.inputNickname.text().strip()) > 0:
-                self.user = User(self.login.inputNickname.text())
+                self.user = User(f"[ANON] {self.login.inputNickname.text()}")
                 print(self.user.get_uuid())
                 self.login.close()
             elif len(self.login.inputNickname.text().strip()) == 0:
@@ -174,9 +184,9 @@ class Client(QtWidgets.QMainWindow):
             self.email = self.login.inputEmail.text()
 
             def _do_user_login(_client: Client):
-                if not _client.socket:
-                    _client.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    _client.socket.connect((_client.HOST, _client.PORT))
+                if not _client._socket:
+                    _client._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _client._socket.connect((_client.HOST, _client.PORT))
 
                 email_q = {
                     "content": "Query",
@@ -186,8 +196,8 @@ class Client(QtWidgets.QMainWindow):
                     "datatype": "email"
                 }
 
-                _client.socket.sendall(pickle.dumps(email_q))
-                user_tuple = pickle.loads(_client.socket.recv(4096))
+                _client._send(_client._socket, fmt.encode_str(email_q))
+                user_tuple = fmt.decode_bytes(_client._socket.recv(4096))
                 if user_tuple is not None:
                     pw = _client.login.inputPassword.text()
                     if _client.check_password(pw, user_tuple[1]):
@@ -221,9 +231,9 @@ class Client(QtWidgets.QMainWindow):
                 :param _client: The QMainWindow instance.
                 :return:
                 """
-                if not _client.socket:
-                    _client.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    _client.socket.connect((_client.HOST, _client.PORT))
+                if not _client._socket:
+                    _client._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _client._socket.connect((_client.HOST, _client.PORT))
 
                 existing_user_q = {
                     "content": "Query",
@@ -233,8 +243,8 @@ class Client(QtWidgets.QMainWindow):
                     "data": _client.email
                 }
 
-                _client.socket.sendall(pickle.dumps(existing_user_q))
-                email_was_found = pickle.loads(_client.socket.recv(4096))
+                _client._send(_client._socket, fmt.encode_str(existing_user_q))
+                email_was_found = fmt.decode_bytes(_client._socket.recv(4096))
 
                 if email_was_found == "":
                     _client.email = None
@@ -246,12 +256,12 @@ class Client(QtWidgets.QMainWindow):
                         "content": "Query",
                         "system-message": True,
                         "create": "user",
-                        "data": pickle.dumps((_client.email, username, pw)),
+                        "data": fmt.encode_str((_client.email, username, pw)),
                         "datatype": "email, username, pw"
                     }
 
-                    _client.socket.sendall(pickle.dumps(register_user_q))
-                    registered_user = pickle.loads(_client.socket.recv(4096))
+                    _client._send(_client._socket, fmt.encode_str(register_user_q))
+                    registered_user = fmt.decode_bytes(_client._socket.recv(4096))
 
                     if registered_user in ["email", "username"]:
                         _client.ERRS = registered_user
@@ -281,12 +291,12 @@ class Client(QtWidgets.QMainWindow):
             if self.ERRS in ["email", "username"]:
                 errdialog = CustomDialog(window_title="Registration Failed",
                                          message=f"An account with that "
-                                         f"{self.ERRS} already exists.")
+                                                 f"{self.ERRS} already exists.")
         if self.ERRS and errdialog:
             errdialog.exec_()
             self.ERRS = None
         if self.login_successful():
-            self.socket.close()
+            self._socket.close()
             self.login.close()
 
     def login_successful(self) -> bool:
@@ -366,9 +376,9 @@ class Client(QtWidgets.QMainWindow):
         self.aboutChatroom.setText(_translate("self", "About Chatroom"))
 
     def setup_ui(self):
+        from clientside.actionslots import HelpSlots, ViewSlots
+
         self.setObjectName("self")
-        icon = QtGui.QIcon("assets/window_icon.ICO")
-        self.setWindowIcon(icon)
         self.resize(578, 363)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
@@ -681,7 +691,7 @@ class Client(QtWidgets.QMainWindow):
         self.menubar.setStyleSheet("QMenuBar::item:selected {\n"
                                    "    background-color: #000;\n"
                                    "    color: #abe25f;\n"
-                                   "}")
+                                   "}\n")
         self.menubar.setDefaultUp(False)
         self.menubar.setNativeMenuBar(True)
         self.menubar.setObjectName("menubar")
@@ -711,45 +721,66 @@ class Client(QtWidgets.QMainWindow):
         self.theme2.setObjectName("theme2")
         self.theme3 = QtWidgets.QAction(self)
         self.theme3.setObjectName("theme3")
+
         self.toggleUserList = QtWidgets.QAction(self)
         self.toggleUserList.setCheckable(True)
         self.toggleUserList.setObjectName("toggleUserList")
+
         self.toggleUserActionButtons = QtWidgets.QAction(self)
         self.toggleUserActionButtons.setCheckable(True)
         self.toggleUserActionButtons.setObjectName("toggleUserActionButtons")
+
         self.toggleCoolMode = QtWidgets.QAction(self)
         self.toggleCoolMode.setCheckable(True)
+        self.toggleCoolMode.triggered.connect(self._toggle_comic_sans)
 
         font = QtGui.QFont()
         font.setFamily("Comic Sans MS")
 
         self.toggleCoolMode.setFont(font)
         self.toggleCoolMode.setObjectName("toggleCoolMode")
+
         self.createTheme = QtWidgets.QAction(self)
         self.createTheme.setObjectName("createTheme")
+
         self.addFriend = QtWidgets.QAction(self)
         self.addFriend.setObjectName("addFriend")
+
         self.editName = QtWidgets.QAction(self)
         self.editName.setObjectName("editName")
+
         self.editStatus = QtWidgets.QAction(self)
         self.editStatus.setObjectName("editStatus")
+
         self.toggleMessageTimestamps = QtWidgets.QAction(self)
         self.toggleMessageTimestamps.setObjectName("toggleMessageTimestamps")
+        self.toggleMessageTimestamps.setCheckable(True)
+
         self.removeFriend = QtWidgets.QAction(self)
         self.removeFriend.setObjectName("removeFriend")
+
         self.blockFriend = QtWidgets.QAction(self)
         self.blockFriend.setObjectName("blockFriend")
+
         self.viewFriends = QtWidgets.QAction(self)
         self.viewFriends.setObjectName("viewFriends")
+
         self.editFontSize = QtWidgets.QAction(self)
         self.editFontSize.setObjectName("editFontSize")
+
         self.leave = QtWidgets.QAction(self)
         self.leave.setObjectName("leave")
+
         self.FAQ = QtWidgets.QAction(self)
         self.FAQ.setObjectName("FAQ")
+        self.FAQ.triggered.connect(HelpSlots.faq)
+
         self.reportABug = QtWidgets.QAction(self)
         self.reportABug.setObjectName("reportABug")
+        self.reportABug.triggered.connect(HelpSlots.report_a_bug)
+
         self.toggleExplicitLanguageFilter = QtWidgets.QAction(self)
+        self.toggleExplicitLanguageFilter.setCheckable(True)
         self.toggleExplicitLanguageFilter.setObjectName("toggleExplicitLanguageFilter")
 
         self.aboutChatroom = QtWidgets.QAction(self)
@@ -800,9 +831,13 @@ class Client(QtWidgets.QMainWindow):
         self.setTabOrder(self.chatroomComboBox, self.pushButton)
 
     def send_message(self, content):
-        tosend = fmt.content(message_content=content, system_message=False, user=self.user)
-        print(tosend)
-        self.socket.sendall(pickle.dumps(tosend))
+        formatted_msg = fmt.content(message_content=content, system_message=False, user=self.user)
+        bytes_to_send = fmt.encode_str(formatted_msg)
+        length_of_bytes = str(len(bytes_to_send)).encode("utf-8")
+        msg_to_send = length_of_bytes
+
+        #  FIX UP THIS SHIT ^ \/
+        self._send(self._socket, fmt.encode_str(formatted_msg))
 
     def show(self):
         """
@@ -833,6 +868,23 @@ class Client(QtWidgets.QMainWindow):
         else:
             # Handles the user closing the login dialog
             sys.exit(ret_code)
+
+    def _toggle_comic_sans(self):
+        """
+        [CHANGE ALL WIDGETS' FONTS]
+
+        :return:
+        """
+        if self.toggleCoolMode.isChecked():
+            self.current_font.setFamily("Comic Sans MS")
+        else:
+            self.current_font.setFamily(self.default_font.family())
+
+        for child in self.menubar.children():
+            if isinstance(child, QtWidgets.QMenu):
+                for dropdown_action in child.actions():
+                    if dropdown_action.text() != "Cool mode":
+                        dropdown_action.setFont(self.current_font)
 
 
 class LoginDialog(QtWidgets.QDialog):
@@ -878,6 +930,7 @@ class LoginDialog(QtWidgets.QDialog):
 
     def setup_ui(self):
         self.setObjectName("self")
+
         self.resize(461, 238)
         self.setMinimumSize(QtCore.QSize(461, 238))
         self.setMaximumSize(QtCore.QSize(461, 238))
@@ -1018,6 +1071,8 @@ class MessageBox(QtWidgets.QPlainTextEdit):
     client's other widgets, useful for displaying messages.
     """
 
+    CHAR_LIMIT: int = 512
+
     sendmsg = QtCore.pyqtSignal(int)
 
     def __init__(self, window: Client, *args):
@@ -1032,15 +1087,25 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         and specific case-checking means that a new line
         isn't added to the next message after sending one.
 
+        If the character limit is exceeded, it will prevent
+        all character-related inputs and if necessary, trim
+        the message to the character limit (i.e. if the
+        user pasted characters into the field and surpassed
+        said limit).
+
         :param event:
         :return:
         """
+        if len(self.toPlainText()) >= self.CHAR_LIMIT and event.key().real < 2**24:
+            self.setPlainText(self.toPlainText()[:self.CHAR_LIMIT])
+            return
+
         if not self.shiftPressed and event.key() == QtCore.Qt.Key_Shift:
             self.shiftPressed = True
         elif not self.shiftPressed and event.key() == QtCore.Qt.Key_Return:
             self.sendmsg.emit(event.key())
         else:
-            super().keyPressEvent(event)
+            super(MessageBox, self).keyPressEvent(event)
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         """
@@ -1060,6 +1125,9 @@ if __name__ == "__main__":
 
     app = QtWidgets.QApplication(sys.argv)
 
+    icon = QtGui.QIcon("../assets/window_icon.png")
+    app.setWindowIcon(icon)
+
     client = Client(
         HOST,
         PORT
@@ -1071,8 +1139,8 @@ if __name__ == "__main__":
         sys.exit(app.exec_())
     except Exception as e:
         print(e)
-        if client.socket:
-            client.socket.close()
+        if client._socket:
+            client._socket.close()
     finally:
         if client.kicked:
             kickWindow = CustomDialog(window_title="Kicked",
