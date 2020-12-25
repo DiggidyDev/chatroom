@@ -1,6 +1,7 @@
 import time
 
 
+# TODO: Create thread-safe timer
 def debug(verbose: bool = False):
     def inner(function):
         def wrapper(*args, **kwargs):
