@@ -1,20 +1,27 @@
 import hashlib
 import pickle
 import re
+from typing import Union
 from datetime import datetime
-from clientside.user import User
 
 from PyQt5 import QtWidgets
 
+from clientside.user import User
 
-def content(*, message_content: str, system_message: bool, user: User):
+
+def content(*,
+            message_content: str,
+            system_message: bool,
+            user: User) -> dict:
     """
-    [ADD DOCSTRING]
+    Creates a message-friendly format for sending
+    messages between the client and server.
     
-    :param message_content: 
-    :param system_message: 
-    :param user: 
-    :return: 
+    :param message_content: The contents to be displayed as a message.
+    :param system_message: An indication as to whether it's been sent
+                           from the server or not (i.e. an important message).
+    :param user: The user sending the message.
+    :return: A dict suitable for sending messages in any chatroom.
     """
     struct = {
         "content": message_content,
@@ -23,6 +30,14 @@ def content(*, message_content: str, system_message: bool, user: User):
     }
 
     return struct
+
+
+def decode_bytes(bytes_to_decode: bytes) -> Union[str, dict, tuple, User]:
+    return pickle.loads(bytes_to_decode)
+
+
+def encode_str(obj_to_encode: Union[str, dict, tuple, User]) -> bytes:
+    return pickle.dumps(obj_to_encode)
 
 
 def hash_pw(password: str, uuid: str) -> str:
@@ -34,7 +49,7 @@ def update_msg_list(widget: QtWidgets.QMainWindow,
     if "user" in received.keys():
         item = QtWidgets.QListWidgetItem()
         if isinstance(received, bytes):
-            received = pickle.loads(received)
+            received = decode_bytes(received)
         sender = str(received["user"])
 
         # Display `You` for messages you, the user, have sent
