@@ -1,5 +1,4 @@
 import hashlib
-import jsons
 import socket
 import threading
 from typing import Union
@@ -59,7 +58,9 @@ class Client(QtWidgets.QMainWindow):
 
         self.setup_ui()
 
-    def _send(self, sock: socket.socket, data: bytes) -> None:
+    @staticmethod
+    def _send(sock: socket.socket,
+              data: bytes) -> None:
         sock.sendall((str(len(data)) + NULL_BYTE).encode("utf-8"))
         sock.sendall(data)
 
@@ -114,6 +115,7 @@ class Client(QtWidgets.QMainWindow):
 
     def connect(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            print("INCOMING")
             if self._socket:
                 self._socket.close()
             s.connect((self.HOST, self.PORT))
@@ -135,6 +137,7 @@ class Client(QtWidgets.QMainWindow):
                         data = fmt.decode_bytes(data)
                     print(f"RECV: {data}")
                     if isinstance(data, dict):
+                        print(data)
                         if data["system-message"]:
                             if data["content"] == "You have been kicked.":
                                 # Modify kicked flag for showing kicked dialog on
@@ -144,9 +147,12 @@ class Client(QtWidgets.QMainWindow):
                                 self._socket.close()
                                 self.close()  # Close the current window
                             else:
+                                print("Updating")
                                 fmt.update_user_list(self, data)
-
+                                print("Done!")
+                        print("updating")
                         fmt.update_msg_list(self, data)
+                        print("done")
 
     def create_anon_user(self):
         if self.login.buttonAnon.hasFocus() or self.login.inputNickname.hasFocus():
@@ -198,10 +204,13 @@ class Client(QtWidgets.QMainWindow):
 
                 _client._send(_client._socket, fmt.encode_str(email_q))
                 user_tuple = fmt.decode_bytes(_client._socket.recv(4096))
+                print(user_tuple)
                 if user_tuple is not None:
                     pw = _client.login.inputPassword.text()
+                    print(pw)
                     if _client.check_password(pw, user_tuple[1]):
                         _client.user = User(existing_data=user_tuple)
+                        print(user_tuple)
                     else:
                         _client.email = None
                         _client.ERRS = "password"
@@ -376,7 +385,7 @@ class Client(QtWidgets.QMainWindow):
         self.aboutChatroom.setText(_translate("self", "About Chatroom"))
 
     def setup_ui(self):
-        from clientside.actionslots import HelpSlots, ViewSlots
+        from clientside.actionslots import HelpSlots
 
         self.setObjectName("self")
         self.resize(578, 363)
@@ -832,11 +841,6 @@ class Client(QtWidgets.QMainWindow):
 
     def send_message(self, content):
         formatted_msg = fmt.content(message_content=content, system_message=False, user=self.user)
-        bytes_to_send = fmt.encode_str(formatted_msg)
-        length_of_bytes = str(len(bytes_to_send)).encode("utf-8")
-        msg_to_send = length_of_bytes
-
-        #  FIX UP THIS SHIT ^ \/
         self._send(self._socket, fmt.encode_str(formatted_msg))
 
     def show(self):
