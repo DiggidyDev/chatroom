@@ -1,5 +1,5 @@
 import datetime
-import pickle
+import json
 import selectors
 import socket
 import threading
@@ -41,8 +41,9 @@ class Server(QtWidgets.QMainWindow):
         conn, addr = sock.accept()
         print(f"Connection successfully made from {':'.join(str(i) for i in addr)}")
 
-        conn.setblocking(False)
-        data = types.SimpleNamespace(addr=addr, inb=b"", outb=b"")
+        sock.settimeout(0.5)
+
+        data = types.SimpleNamespace(addr=addr, outb=b"")
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
         self.sel.register(conn, events=events, data=data)
 
@@ -52,23 +53,26 @@ class Server(QtWidgets.QMainWindow):
         lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         lsock.bind(("", PORT))
 
-        # Listen, don't use blocking calls
+        # Listen, use blocking calls
         lsock.listen()
-        lsock.setblocking(False)
+        lsock.settimeout(0.5)
 
         # Socket registration
         self.sel.register(lsock, selectors.EVENT_READ, data=None)
         while True:
-            events = self.sel.select()
+
+            try:
+                events = self.sel.select()
+            except Exception as e:
+                print(e)
+                events = []
+
             for k, mask in events:
 
                 if not k.data:
                     self.accept_wrapper(k.fileobj)
                 else:
-                    try:
-                        self.handle_conn(k, mask)
-                    except pickle.UnpicklingError as e:
-                        print(e)
+                    self.handle_conn(k, mask)
 
     # @debug(verbose=True)
     def conn_single(self) -> None:
@@ -81,17 +85,18 @@ class Server(QtWidgets.QMainWindow):
             with conn:
                 print(f"Connection made from {addr}")
                 while True:
+                    read_length = None
+                    recieved = None
+                    """
+                    while recieved != b"\x00":
+                        recieved = fmt.decode_bytes(conn.recv(1))
+                        print(recieved)"""
                     data = conn.recv(4096)
 
                     if not data:
                         break
 
                     conn.sendall(f"Hello {addr[0]}!".encode("utf-8"))
-
-    def emit(self, event: callable) -> None:
-        # Maybe work with some queues or something?
-        # Priority queue?
-        event()
 
     def get_client_by(self, criteria: str, value) -> dict:
         for client in self.clients:
@@ -113,7 +118,16 @@ class Server(QtWidgets.QMainWindow):
         if mask & selectors.EVENT_READ:
             recv_bytes = None
             try:
-                recv_bytes = sock.recv(4096)
+                read_length = ""
+                received = None
+
+                while received not in [b"\x00", b""]:
+                    received = sock.recv(1)
+                    read_length += received.decode("utf-8") if received != b"\x00" else ""
+
+                if read_length != "":
+                    recv_bytes = sock.recv(int(read_length))
+
             except Exception as e:
                 print(e)
                 print(f"Closing connection with {data.addr}")
@@ -125,12 +139,12 @@ class Server(QtWidgets.QMainWindow):
 
                 if client['user'] is not None:
                     self.send_message(f"{client['user']} left.")
-                    update_msg_list(self, fmt.content(content=f"{client['user']} left.",
+                    update_msg_list(self, fmt.content(message_content=f"{client['user']} left.",
                                                       user=self.user,
                                                       system_message=True))
 
             if recv_bytes:
-                recv_content = pickle.loads(recv_bytes)
+                recv_content = fmt.decode_bytes(recv_bytes)
                 # print(f"RECV: {recv_content['content']} from {sender.get_uuid()} - {sender.nickname}")
                 if recv_content['system-message']:
                     if recv_content['content'] == "Query":
@@ -156,13 +170,13 @@ class Server(QtWidgets.QMainWindow):
                         recv_content["userlist"] = [
                             self.userList.item(x).text() for x in range(self.userList.count())
                         ]
-                data.outb += pickle.dumps(recv_content) if "Query" not in recv_content["content"] else b""
+                data.outb += fmt.encode_str(recv_content) if "Query" not in recv_content["content"] else b""
 
         # Outgoing data
         if mask & selectors.EVENT_WRITE:
             if data.outb:
                 if isinstance(data.outb, bytes):
-                    to_send = pickle.loads(data.outb)
+                    to_send = fmt.decode_bytes(data.outb)
                 else:
                     to_send = data.outb
                 sent = self.send_message(to_send)
@@ -179,27 +193,29 @@ class Server(QtWidgets.QMainWindow):
             if recv_content["get"] == "user":
                 user_tuple = query.fetch_user_data_by(recv_content["datatype"],
                                                       recv_content["data"])
-                sock.sendall(pickle.dumps(user_tuple))
+                sock.sendall(fmt.encode_str(user_tuple))
             elif recv_content["get"] == "password":
                 pw_hash_tuple = query.get_pw_hash_by(recv_content["datatype"],
                                                      recv_content["data"])
-                sock.sendall(pickle.dumps(pw_hash_tuple[0]))
+                sock.sendall(fmt.encode_str(pw_hash_tuple[0]))
 
         elif "create" in recv_content.keys():
             if recv_content["create"] == "user":
-                if isinstance(pickle.loads(recv_content["data"]), tuple):
-                    recv_content["data"] = pickle.loads(recv_content["data"])
+                if isinstance(fmt.decode_bytes(recv_content["data"]), tuple):
+                    recv_content["data"] = fmt.decode_bytes(recv_content["data"])
                     email = recv_content["data"][0]
 
                     email_exists = query.does_user_email_exist(email)
+
                     if email_exists:
-                        sock.sendall(pickle.dumps("email"))
+                        sock.sendall(fmt.encode_str("email"))
                         return
 
                     username = recv_content["data"][1]
                     username_available = query.is_username_available(username)
+
                     if not username_available:
-                        sock.sendall(pickle.dumps("username"))
+                        sock.sendall(fmt.encode_str("username"))
                         return
 
                     pw = recv_content["data"][2]
@@ -207,7 +223,7 @@ class Server(QtWidgets.QMainWindow):
                                     registered_user=True)
                     new_user.set_email(email)
                     query.add_user(new_user, password=pw)
-                    sock.sendall(pickle.dumps(new_user))
+                    sock.sendall(fmt.encode_str(new_user))
 
     def kick(self):
         current_user = self.userList.currentItem()
@@ -222,11 +238,12 @@ class Server(QtWidgets.QMainWindow):
             finally:
                 self.clients.remove(client)
                 self.userList.takeItem(self.userList.selectedIndexes()[0].row())
-                kicked_msg = fmt.content(content=f"{client['user']} was kicked.",
+                kicked_msg = fmt.content(message_content=f"{client['user']} was kicked.",
                                          user=self.user,
                                          system_message=True)
                 self.send_message(kicked_msg)
                 update_msg_list(self, kicked_msg)
+                print("done")
 
     def retranslate_ui(self):
         _translate = QtCore.QCoreApplication.translate
@@ -249,17 +266,17 @@ class Server(QtWidgets.QMainWindow):
     def send_message(self, msg, client=None):
         sent = 0
         if isinstance(msg, bytes):
-            msg = pickle.loads(msg)
+            msg = fmt.decode_bytes(msg)
         if isinstance(msg, str):
-            msg = fmt.content(content=msg,
+            msg = fmt.content(message_content=msg,
                               system_message=True,
                               user=self.user)
         print(msg["user"])
         if client:
-            sent = client["conn"].send(pickle.dumps(msg))
+            sent = client["conn"].send(fmt.encode_str(msg))
         elif not client:
             for c in self.clients:
-                sent = c["conn"].send(pickle.dumps(msg))
+                sent = c["conn"].send(fmt.encode_str(msg))
         else:
             print(msg, type(msg))
         return sent
