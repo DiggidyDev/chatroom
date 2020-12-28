@@ -10,11 +10,14 @@ from PyQt5 import QtCore, QtWidgets
 from clientside.user import User
 from serverside import query
 from utils import fmt
-# from utils.debug import debug
 from utils.fmt import update_msg_list
 
 PORT = 65501
 HOST = socket.gethostbyname(socket.gethostname())
+
+
+user_query = query.UserQuery()
+msg_query = query.MessageQuery()
 
 
 class Server(QtWidgets.QMainWindow):
@@ -23,7 +26,7 @@ class Server(QtWidgets.QMainWindow):
     def __init__(self, host: str, port: int):
         super().__init__()
 
-        query.create_table_if_not_exists("accounts")
+        user_query.create_table_if_not_exists("accounts")
 
         self.conn = (host, port)
         self.clients = []
@@ -34,7 +37,6 @@ class Server(QtWidgets.QMainWindow):
 
         self.setup_ui()
 
-    # @debug(verbose=True)
     def accept_wrapper(self, sock: SCKT_TYPE) -> None:
         # Accept the incoming connection
         conn, addr = sock.accept()
@@ -46,7 +48,6 @@ class Server(QtWidgets.QMainWindow):
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
         self.sel.register(conn, events=events, data=data)
 
-    # @debug(verbose=True)
     def conn_multi(self) -> None:
         # Create and bind the socket
         lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -73,7 +74,6 @@ class Server(QtWidgets.QMainWindow):
                 else:
                     self.handle_conn(k, mask)
 
-    # @debug(verbose=True)
     def conn_single(self) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((HOST, PORT))
@@ -84,12 +84,6 @@ class Server(QtWidgets.QMainWindow):
             with conn:
                 print(f"Connection made from {addr}")
                 while True:
-                    read_length = None
-                    recieved = None
-                    """
-                    while recieved != b"\x00":
-                        recieved = fmt.decode_bytes(conn.recv(1))
-                        print(recieved)"""
                     data = conn.recv(4096)
 
                     if not data:
@@ -190,11 +184,11 @@ class Server(QtWidgets.QMainWindow):
     def handle_query(recv_content: dict, sock: socket.socket):
         if "get" in recv_content.keys():
             if recv_content["get"] == "user":
-                user_tuple = query.fetch_user_data_by(recv_content["datatype"],
+                user_tuple = user_query.fetch_user_data_by(recv_content["datatype"],
                                                       recv_content["data"])
                 sock.sendall(fmt.encode_str(user_tuple))
             elif recv_content["get"] == "password":
-                pw_hash_tuple = query.get_pw_hash_by(recv_content["datatype"],
+                pw_hash_tuple = user_query.get_pw_hash_by(recv_content["datatype"],
                                                      recv_content["data"])
                 sock.sendall(fmt.encode_str(pw_hash_tuple[0]))
 
@@ -204,14 +198,14 @@ class Server(QtWidgets.QMainWindow):
                     recv_content["data"] = fmt.decode_bytes(recv_content["data"])
                     email = recv_content["data"][0]
 
-                    email_exists = query.does_user_email_exist(email)
+                    email_exists = user_query.does_user_email_exist(email)
 
                     if email_exists:
                         sock.sendall(fmt.encode_str("email"))
                         return
 
                     username = recv_content["data"][1]
-                    username_available = query.is_username_available(username)
+                    username_available = user_query.is_username_available(username)
 
                     if not username_available:
                         sock.sendall(fmt.encode_str("username"))
@@ -221,7 +215,7 @@ class Server(QtWidgets.QMainWindow):
                     new_user = User(nickname=username,
                                     registered_user=True)
                     new_user.set_email(email)
-                    query.add_user(new_user, password=pw)
+                    user_query.add_user(new_user, password=pw)
                     sock.sendall(fmt.encode_str(new_user))
 
     def kick(self):
@@ -351,14 +345,14 @@ class Server(QtWidgets.QMainWindow):
 
         self.setCentralWidget(self.centralwidget)
 
-        self.menubar = QtWidgets.QMenuBar(self)
-        self.menubar.setObjectName("menubar")
-        self.menubar.setGeometry(QtCore.QRect(0, 0, 437, 21))
-        self.setMenuBar(self.menubar)
+        self.menu_bar = QtWidgets.QMenuBar(self)
+        self.menu_bar.setObjectName("menu_bar")
+        self.menu_bar.setGeometry(QtCore.QRect(0, 0, 437, 21))
+        self.setMenuBar(self.menu_bar)
 
-        self.statusbar = QtWidgets.QStatusBar(self)
-        self.statusbar.setObjectName("statusbar")
-        self.setStatusBar(self.statusbar)
+        self.status_bar = QtWidgets.QStatusBar(self)
+        self.status_bar.setObjectName("status_bar")
+        self.setStatusBar(self.status_bar)
 
         self.retranslate_ui()
 
