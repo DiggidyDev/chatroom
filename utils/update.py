@@ -1,6 +1,7 @@
 from PyQt5 import QtWidgets, QtCore
 
 # TODO: Auto-update ZIP
+CHUNK_SIZE = 2 ** 20
 
 # Set the current application's download type
 # based on the modules available to be imported
@@ -46,7 +47,9 @@ def get_live_version() -> str:
     import json  # For converting the requested string into JSON
     import urllib.request  # Querying for the current live version
 
+    # TODO: Try/except catch any status errors
     live_version = json.loads(urllib.request.urlopen("https://diggydev.co.uk/chatroom/version.json").read())["live_bin"]
+
     return live_version
 
 
@@ -63,7 +66,7 @@ def start_download():
 class ProgressWindow(QtWidgets.QDialog):
 
     def __init__(self):
-        super().__init__()
+        super(ProgressWindow, self).__init__()
         self.setup_ui()
 
     def check_for_updates(self):
@@ -80,8 +83,6 @@ class ProgressWindow(QtWidgets.QDialog):
                 import os
                 import requests
 
-                CHNK_SIZE = 2 ** 20
-
                 if not os.path.isfile("updater.exe"):
                     self.labelCurrentTask.setText("Fetching updater.exe")
 
@@ -92,7 +93,7 @@ class ProgressWindow(QtWidgets.QDialog):
                     self.labelCurrentTask.setText("Downloading updater.exe")
 
                     with open("updater.exe", "wb") as up_exe:
-                        for chnk in updater.iter_content(chunk_size=CHNK_SIZE):
+                        for chnk in updater.iter_content(chunk_size=CHUNK_SIZE):
                             up_exe.write(chnk)
                             cur_size += len(chnk)
                             self.progressBar.setValue(int((cur_size/updater_size) * 100))
@@ -110,7 +111,7 @@ class ProgressWindow(QtWidgets.QDialog):
 
                 self.labelCurrentTask.setText("Downloading client.exe")
                 with open("client-new.exe", "wb") as exe:
-                    for chnk in new_client.iter_content(chunk_size=CHNK_SIZE):  # 1 MiB
+                    for chnk in new_client.iter_content(chunk_size=CHUNK_SIZE):  # 1 MiB
                         exe.write(chnk)
                         cur_size += len(chnk)
                         self.progressBar.setValue(int((cur_size / new_client_size) * 100))
