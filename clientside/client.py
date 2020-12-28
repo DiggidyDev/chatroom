@@ -64,6 +64,33 @@ class Client(QtWidgets.QMainWindow):
         sock.sendall((str(len(data)) + NULL_BYTE).encode("utf-8"))
         sock.sendall(data)
 
+    def __recursive_font_change(self, parent: Union[QtWidgets.QMenu, QtCore.QObject]) -> None:
+        if hasattr(parent, "children"):
+            for child in parent.children():
+                self.__recursive_font_change(child)
+        if hasattr(parent, "actions"):
+            for action in parent.actions():
+                if action != self.toggleCoolMode:
+                    action.setFont(self.current_font)
+
+    def _toggle_comic_sans(self) -> None:
+        """
+        [CHANGE ALL WIDGETS' FONTS]
+
+        :return: None
+        """
+        if self.toggleCoolMode.isChecked():
+            self.current_font.setFamily("Comic Sans MS")
+        else:
+            self.current_font.setFamily(self.default_font.family())
+
+        for child in self.menubar.children():
+            self.__recursive_font_change(child)
+
+    def _toggle_user_buttons(self):
+        self.friendButton.setVisible(not self.toggleUserActionButtons.isChecked())
+        self.muteButton.setVisible(not self.toggleUserActionButtons.isChecked())
+
     def check_password(self, password: str, salt: str) -> bool:
         """
         Compares the server-side hashed password and the hash for
@@ -98,15 +125,17 @@ class Client(QtWidgets.QMainWindow):
         elif len(self.login.inputEmail.text().strip()) == 0:
             errdialog = CustomDialog(window_title="Email",
                                      message="Please enter your email")
-        elif len(self.login.inputPassword.text().strip()) == 0:
-            errdialog = CustomDialog(window_title="Password",
-                                     message="Please enter your password")
         elif not fmt.is_valid_email(self.login.inputEmail.text()):
             errdialog = CustomDialog(window_title="Email",
                                      message="Please enter a valid email address")
+        elif len(self.login.inputPassword.text().strip()) == 0:
+            errdialog = CustomDialog(window_title="Password",
+                                     message="Please enter your password")
         else:
             return True
+
         errdialog.exec_()
+
         return False
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
@@ -121,13 +150,13 @@ class Client(QtWidgets.QMainWindow):
             s.connect((self.HOST, self.PORT))
             self._socket = s
 
-            initialcontent = {
+            initial_content = {
                 "content": "Initial connection.",
                 "system-message": True,
                 "user": self.user
             }
 
-            self._send(self._socket, fmt.encode_str(initialcontent))
+            self._send(self._socket, fmt.encode_str(initial_content))
 
             while not self.stop_event.is_set():
                 recv_data = s.recv(4096)
@@ -137,7 +166,6 @@ class Client(QtWidgets.QMainWindow):
                         data = fmt.decode_bytes(data)
                     print(f"RECV: {data}")
                     if isinstance(data, dict):
-                        print(data)
                         if data["system-message"]:
                             if data["content"] == "You have been kicked.":
                                 # Modify kicked flag for showing kicked dialog on
@@ -147,18 +175,15 @@ class Client(QtWidgets.QMainWindow):
                                 self._socket.close()
                                 self.close()  # Close the current window
                             else:
-                                print("Updating")
                                 fmt.update_user_list(self, data)
-                                print("Done!")
-                        print("updating")
+
                         fmt.update_msg_list(self, data)
-                        print("done")
 
     def create_anon_user(self):
         if self.login.buttonAnon.hasFocus() or self.login.inputNickname.hasFocus():
             if len(self.login.inputNickname.text().strip()) > 0:
                 self.user = User(f"[ANON] {self.login.inputNickname.text()}")
-                print(self.user.get_uuid())
+                print(self.user.uuid)
                 self.login.close()
             elif len(self.login.inputNickname.text().strip()) == 0:
                 errdialog = CustomDialog(window_title="Error",
@@ -177,9 +202,9 @@ class Client(QtWidgets.QMainWindow):
         self.login.toggleExistingAcc.toggled.connect(self.login.toggle_register_button)
         self.login.inputNickname.textEdited.connect(self.login.disable_account_inputs)
 
-        for i in [self.login.inputEmail,
+        for i in {self.login.inputEmail,
                   self.login.inputPassword,
-                  self.login.inputUsername]:
+                  self.login.inputUsername}:
             i.textEdited.connect(self.login.disable_anon_input)
             i.returnPressed.connect(self.inspect_button)
 
@@ -209,7 +234,7 @@ class Client(QtWidgets.QMainWindow):
                     pw = _client.login.inputPassword.text()
                     print(pw)
                     if _client.check_password(pw, user_tuple[1]):
-                        _client.user = User(existing_data=user_tuple)
+                        _client.user = User.from_existing_data(data=user_tuple)
                         print(user_tuple)
                     else:
                         _client.email = None
@@ -272,7 +297,7 @@ class Client(QtWidgets.QMainWindow):
                     _client._send(_client._socket, fmt.encode_str(register_user_q))
                     registered_user = fmt.decode_bytes(_client._socket.recv(4096))
 
-                    if registered_user in ["email", "username"]:
+                    if registered_user in {"email", "username"}:
                         _client.ERRS = registered_user
                         _client.email = None
                     else:
@@ -297,7 +322,7 @@ class Client(QtWidgets.QMainWindow):
                                          message="Account with that email not found")
         else:
             self.do_registration()
-            if self.ERRS in ["email", "username"]:
+            if self.ERRS in {"email", "username"}:
                 errdialog = CustomDialog(window_title="Registration Failed",
                                          message=f"An account with that "
                                                  f"{self.ERRS} already exists.")
@@ -316,10 +341,10 @@ class Client(QtWidgets.QMainWindow):
 
         :return: A boolean indicating the current login status.
         """
-        return any(condition is not None for condition in [
+        return any(condition is not None for condition in {
             self.email,
             self.user
-        ])
+        })
 
     def on_key(self) -> None:
         """
@@ -346,6 +371,7 @@ class Client(QtWidgets.QMainWindow):
         self.userList.setSortingEnabled(False)
 
         self.userList.setSortingEnabled(__sortingEnabled)
+
         self.chatroomGroupBox.setTitle(_translate("self", "Chatroom"))
         self.chatroomComboBox.setItemText(0, _translate("self", "Main"))
         self.chatroomComboBox.setItemText(1, _translate("self", "Game 1"))
@@ -373,7 +399,6 @@ class Client(QtWidgets.QMainWindow):
         self.addFriend.setText(_translate("self", "Add friend"))
         self.editName.setText(_translate("self", "Edit name"))
         self.editStatus.setText(_translate("self", "Change status"))
-        self.toggleMessageTimestamps.setText(_translate("self", "Toggle Message Timestamps"))
         self.removeFriend.setText(_translate("self", "Remove friend"))
         self.blockFriend.setText(_translate("self", "Block user"))
         self.viewFriends.setText(_translate("self", "View friends"))
@@ -516,7 +541,7 @@ class Client(QtWidgets.QMainWindow):
         self.friendButton.setObjectName("friendButton")
         self.usersGridLayout.addWidget(self.friendButton, 1, 0, 1, 1)
 
-        self.userList = QtWidgets.QListWidget(self.usersGroupBox)
+        self.userList = ListWidget(self.usersGroupBox)
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
@@ -524,25 +549,25 @@ class Client(QtWidgets.QMainWindow):
         self.userList.setSizePolicy(sizePolicy)
         self.userList.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
 
-        # List and item CSS
+        # User list and item CSS
         self.userList.setStyleSheet("QListView {\n"
                                     "    background-color: rgb(56, 40, 80);\n"
                                     "    color: white;\n"
                                     "    selection-color: white;\n"
                                     "}\n"
-                                    "\n"
+                                    "QListView::item {\n"
+                                    "    border: none;\n"
+                                    "}\n"
                                     "#userList::item:hover {\n"
                                     "    border: 1px solid rgb(56, 40, 80);\n"
                                     "    border-radius: 5px;\n"
                                     "    background-color: #A054ED;\n"
                                     "}\n"
-                                    "\n"
                                     "#userList::item:selected {\n"
                                     "    border: 1px solid rgb(56, 40, 80);\n"
                                     "    border-radius:5px;\n"
                                     "    background-color: #000;\n"
                                     "}\n"
-                                    "\n"
                                     "")
 
         self.userList.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -615,7 +640,10 @@ class Client(QtWidgets.QMainWindow):
         self.msgListGroupBox.setObjectName("msgListGroupBox")
         self.gridLayout_2 = QtWidgets.QGridLayout(self.msgListGroupBox)
         self.gridLayout_2.setObjectName("gridLayout_2")
-        self.msgList = QtWidgets.QListWidget(self.msgListGroupBox)
+
+        self.msgList = ListWidget(self.msgListGroupBox)
+        self.msgList.setWrapping(True)
+        self.msgList.setWordWrap(True)
 
         sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
         sizePolicy.setHorizontalStretch(0)
@@ -631,11 +659,13 @@ class Client(QtWidgets.QMainWindow):
                                    "    color: white;\n"
                                    "    alternate-background-color: white;\n"
                                    "}\n"
-                                   "\n"
+                                   "QListView::item {\n"
+                                   "    border: none;\n"
+                                   "}\n"
                                    "QFrame {\n"
                                    "    border: 1px solid white;\n"
                                    "    border-radius: 6px;\n"
-                                   "    outline: None;\n"
+                                   "    outline: none;\n"
                                    "}\n"
                                    "\n"
                                    "QScrollBar {\n"
@@ -651,9 +681,9 @@ class Client(QtWidgets.QMainWindow):
         self.msgList.setProperty("isWrapping", False)
         self.msgList.setResizeMode(QtWidgets.QListView.Adjust)
         self.msgList.setViewMode(QtWidgets.QListView.ListMode)
-        self.msgList.setUniformItemSizes(False)
-        self.msgList.setWordWrap(True)
         self.msgList.setObjectName("msgList")
+
+        self.msgList.model().rowsInserted.connect(self.msgList.scrollToBottom)
 
         # TODO: ADDING MESSAGES TO THE LIST \/
         item = QtWidgets.QListWidgetItem()
@@ -703,7 +733,7 @@ class Client(QtWidgets.QMainWindow):
                                    "}\n")
         self.menubar.setDefaultUp(False)
         self.menubar.setNativeMenuBar(True)
-        self.menubar.setObjectName("menubar")
+        self.menubar.setObjectName("menu_bar")
         self.menuView = QtWidgets.QMenu(self.menubar)
         self.menuView.setAutoFillBackground(False)
         self.menuView.setStyleSheet("")
@@ -738,6 +768,7 @@ class Client(QtWidgets.QMainWindow):
         self.toggleUserActionButtons = QtWidgets.QAction(self)
         self.toggleUserActionButtons.setCheckable(True)
         self.toggleUserActionButtons.setObjectName("toggleUserActionButtons")
+        self.toggleUserActionButtons.triggered.connect(self._toggle_user_buttons)
 
         self.toggleCoolMode = QtWidgets.QAction(self)
         self.toggleCoolMode.setCheckable(True)
@@ -760,10 +791,6 @@ class Client(QtWidgets.QMainWindow):
 
         self.editStatus = QtWidgets.QAction(self)
         self.editStatus.setObjectName("editStatus")
-
-        self.toggleMessageTimestamps = QtWidgets.QAction(self)
-        self.toggleMessageTimestamps.setObjectName("toggleMessageTimestamps")
-        self.toggleMessageTimestamps.setCheckable(True)
 
         self.removeFriend = QtWidgets.QAction(self)
         self.removeFriend.setObjectName("removeFriend")
@@ -803,7 +830,6 @@ class Client(QtWidgets.QMainWindow):
         self.menuThemes.addAction(self.createTheme)
 
         self.menuView.addAction(self.toggleExplicitLanguageFilter)
-        self.menuView.addAction(self.toggleMessageTimestamps)
         self.menuView.addAction(self.toggleUserActionButtons)
         self.menuView.addAction(self.toggleUserList)
         self.menuView.addSeparator()
@@ -868,27 +894,10 @@ class Client(QtWidgets.QMainWindow):
             self.conn_thread.setDaemon(True)
             self.conn_thread.start()
 
-            super().show()
+            super().showMaximized()
         else:
             # Handles the user closing the login dialog
             sys.exit(ret_code)
-
-    def _toggle_comic_sans(self):
-        """
-        [CHANGE ALL WIDGETS' FONTS]
-
-        :return:
-        """
-        if self.toggleCoolMode.isChecked():
-            self.current_font.setFamily("Comic Sans MS")
-        else:
-            self.current_font.setFamily(self.default_font.family())
-
-        for child in self.menubar.children():
-            if isinstance(child, QtWidgets.QMenu):
-                for dropdown_action in child.actions():
-                    if dropdown_action.text() != "Cool mode":
-                        dropdown_action.setFont(self.current_font)
 
 
 class LoginDialog(QtWidgets.QDialog):
@@ -1097,8 +1106,9 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         user pasted characters into the field and surpassed
         said limit).
 
-        :param event:
-        :return:
+        :param event: The QKeyEvent object emitted, used for
+                      fetching the pressed key.
+        :return: None
         """
         if len(self.toPlainText()) >= self.CHAR_LIMIT and event.key().real < 2**24:
             self.setPlainText(self.toPlainText()[:self.CHAR_LIMIT])
@@ -1124,6 +1134,17 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         super().keyReleaseEvent(event)
 
 
+class ListWidget(QtWidgets.QListWidget):
+
+    def __init__(self, parent: QtWidgets.QWidget):
+        super(ListWidget, self).__init__(parent)
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
+        for item in self.selectedItems():
+            item.setSelected(False)
+        super(ListWidget, self).focusOutEvent(event)
+
+
 if __name__ == "__main__":
     import sys
 
@@ -1132,10 +1153,7 @@ if __name__ == "__main__":
     icon = QtGui.QIcon("../assets/window_icon.png")
     app.setWindowIcon(icon)
 
-    client = Client(
-        HOST,
-        PORT
-    )
+    client = Client(HOST, PORT)
     try:
         client.show()
 
