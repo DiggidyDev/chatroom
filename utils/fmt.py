@@ -9,6 +9,16 @@ from PyQt5 import QtWidgets
 from clientside.user import User
 
 
+def _get_explicit_words() -> str:
+    import pkgutil
+    import clientside
+
+    return pkgutil.get_data("clientside", "explicit_words_list.txt").decode("utf-8")
+
+
+EXPLICIT_WORDS = _get_explicit_words()
+
+
 def content(*,
             message_content: str,
             system_message: bool,
@@ -40,25 +50,43 @@ def encode_str(obj_to_encode: Union[str, dict, tuple, User]) -> bytes:
     return pickle.dumps(obj_to_encode)
 
 
+def filter_content(msg: str) -> str:
+    pattern = EXPLICIT_WORDS.replace("\r\n", "|")
+    indices = [i.span() for i in re.finditer(pattern, msg.lower())]
+    filtered_msg = list(msg)
+
+    for start, end in indices:
+        for i in range(start, end):
+            filtered_msg[i] = "*"
+
+    filtered_msg = "".join(filtered_msg)
+
+    return filtered_msg
+
+
 def hash_pw(password: str, uuid: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), uuid.encode("utf-8"), 200000).hex()
 
 
+# noinspection PyTypeHints
 def update_msg_list(widget: QtWidgets.QMainWindow,
                     received: dict):
     if "user" in received.keys():
         item = QtWidgets.QListWidgetItem()
+
         if isinstance(received, bytes):
             received = decode_bytes(received)
+
         sender = str(received["user"])
+        message_content = received["content"]
 
         # Display `You` for messages you, the user, have sent
         # as to distinguish messages in an easier fashion
         if hasattr(widget, "user"):
-            if received["user"].get_uuid() == widget.user.get_uuid():
+            if received["user"].uuid == widget.user.uuid:
                 sender = "You"
 
-        currentTime = datetime.now()
+        current_time = datetime.now()
 
         if received['system-message']:
             if received['content'] == "Initial connection.":
@@ -67,46 +95,48 @@ def update_msg_list(widget: QtWidgets.QMainWindow,
                 item.setText(f"{sender} left.")
             else:
                 item.setText(received["content"])
-        elif not received['system-message']:
-            # EXPLICIT FILTER
-            item.setText(f"{sender}: {received['content'].lower().replace('fuck', '****')}")
 
-        item.setToolTip(fr"""Timestamp: {currentTime.strftime("%Y/%m/%d - %H:%M:%S")}
-    UUID: {received['user'].get_uuid() if received['user'] != 'Server' else None}""".strip())
+        elif not received['system-message']:
+            if hasattr(widget, "toggleExplicitLanguageFilter") and widget.toggleExplicitLanguageFilter.isChecked():
+                message_content = filter_content(message_content)
+
+            item.setText(f"{sender}: {message_content}")
+
+        item.setToolTip(fr"""Timestamp: {current_time.strftime("%Y/%m/%d - %H:%M:%S")}""")
+
         try:
             widget.msgList.addItem(item)
         except RuntimeError:
             return
 
-        widget.msgList.scrollToBottom()
-
 
 def update_user_list(widget: QtWidgets.QMainWindow,
                      recv_content: dict):
+    endings = {" was kicked.", " left."}
+
     if recv_content["content"] == "Initial connection.":
         new_user = recv_content["user"]
         server_user_list: list = recv_content["userlist"]
+
         if new_user.name == widget.user.name:
             for user in server_user_list:
-                uitem = QtWidgets.QListWidgetItem()
-                uitem.setText(user)
-                widget.userList.addItem(uitem)
+                user_item = QtWidgets.QListWidgetItem()
+                user_item.setText(user)
+                widget.userList.addItem(user_item)
         else:
-            uitem = QtWidgets.QListWidgetItem()
-            uitem.setText(new_user.name)
-            widget.userList.addItem(uitem)
-    elif recv_content["content"].endswith(" was kicked."):
-        kicked_user = recv_content["content"][:-12]
-        if hasattr(widget, "userList"):
-            widget.userList.takeItem([
-                widget.userList.item(i).text() for i in range(widget.userList.count())
-            ].index(kicked_user))
-    elif recv_content["content"].endswith(" left."):
-        left_user = recv_content["content"][:-6]
-        if hasattr(widget, "userList"):
-            widget.userList.takeItem([
-                                         widget.userList.item(i).text() for i in range(widget.userList.count())
-                                     ].index(left_user))
+            user_item = QtWidgets.QListWidgetItem()
+            user_item.setText(new_user.name)
+            widget.userList.addItem(user_item)
+
+    for ending in endings:
+        if recv_content["content"].endswith(ending):
+
+            user_to_remove = recv_content["content"][:-len(ending)]
+
+            if hasattr(widget, "userList"):
+                widget.userList.takeItem([
+                    widget.userList.item(i).text() for i in range(widget.userList.count())
+                ].index(user_to_remove))
 
 
 def is_valid_email(email: str) -> re.Match:
