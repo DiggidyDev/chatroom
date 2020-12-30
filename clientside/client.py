@@ -5,9 +5,11 @@ from typing import Union
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 
-from clientside.user import User
+from user import User
 from ui.info import CustomDialog
 from utils import fmt, update
+from message import Message
+from room import Room
 
 HOST = "18.217.109.81"  # AWS hosting the server
 PORT = 65501  # Server listening to connections on this port
@@ -59,10 +61,16 @@ class Client(QtWidgets.QMainWindow):
         self.setup_ui()
 
     @staticmethod
-    def _send(sock: socket.socket,
-              data: bytes) -> None:
-        sock.sendall((str(len(data)) + NULL_BYTE).encode("utf-8"))
-        sock.sendall(data)
+    def _send(sock: socket.socket, data: Union[Message, dict]) -> None:
+        if isinstance(data, Message):
+            encoded = bytes(data)
+        elif isinstance(data, dict):
+            encoded = bytes(Message(**data))
+        try:
+            sock.sendall((str(len(encoded)) + NULL_BYTE).encode("utf-8"))
+            sock.sendall(encoded)
+        except ReferenceError:
+            print("OH NO")
 
     def __recursive_font_change(self, parent: Union[QtWidgets.QMenu, QtCore.QObject]) -> None:
         if hasattr(parent, "children"):
@@ -105,7 +113,7 @@ class Client(QtWidgets.QMainWindow):
 
         pw_q = {
             "content": "Query",
-            "system-message": True,
+            "system_message": True,
             "data": self.email,
             "datatype": "email",
             "get": "password"
@@ -152,7 +160,7 @@ class Client(QtWidgets.QMainWindow):
 
             initial_content = {
                 "content": "Initial connection.",
-                "system-message": True,
+                "system_message": True,
                 "user": self.user
             }
 
@@ -166,7 +174,7 @@ class Client(QtWidgets.QMainWindow):
                         data = fmt.decode_bytes(data)
                     print(f"RECV: {data}")
                     if isinstance(data, dict):
-                        if data["system-message"]:
+                        if data["system_message"]:
                             if data["content"] == "You have been kicked.":
                                 # Modify kicked flag for showing kicked dialog on
                                 # connection abortion
@@ -191,7 +199,7 @@ class Client(QtWidgets.QMainWindow):
                 errdialog.exec_()
 
     @property
-    def current_room(self):
+    def current_room(self) -> Room:
         return self.chatroomComboBox.currentText()
 
     def do_account_setup(self):
@@ -221,7 +229,7 @@ class Client(QtWidgets.QMainWindow):
 
                 email_q = {
                     "content": "Query",
-                    "system-message": True,
+                    "system_message": True,
                     "get": "user",
                     "data": _client.email,
                     "datatype": "email"
@@ -271,13 +279,13 @@ class Client(QtWidgets.QMainWindow):
 
                 existing_user_q = {
                     "content": "Query",
-                    "system-message": True,
+                    "system_message": True,
                     "get": "user",
                     "datatype": "email",
                     "data": _client.email
                 }
 
-                _client._send(_client._socket, fmt.encode_str(existing_user_q))
+                _client._send(_client._socket, existing_user_q)
                 email_was_found = fmt.decode_bytes(_client._socket.recv(4096))
 
                 if email_was_found == "":
@@ -288,13 +296,13 @@ class Client(QtWidgets.QMainWindow):
 
                     register_user_q = {
                         "content": "Query",
-                        "system-message": True,
+                        "system_message": True,
                         "create": "user",
                         "data": fmt.encode_str((_client.email, username, pw)),
                         "datatype": "email, username, pw"
                     }
 
-                    _client._send(_client._socket, fmt.encode_str(register_user_q))
+                    _client._send(_client._socket, register_user_q)
                     registered_user = fmt.decode_bytes(_client._socket.recv(4096))
 
                     if registered_user in {"email", "username"}:
@@ -866,8 +874,9 @@ class Client(QtWidgets.QMainWindow):
         self.setTabOrder(self.chatroomComboBox, self.pushButton)
 
     def send_message(self, content):
-        formatted_msg = fmt.content(message_content=content, system_message=False, user=self.user)
-        self._send(self._socket, fmt.encode_str(formatted_msg))
+        msg = Message(content=content, room=self.current_room.uuid,
+                      sender=str(self.user.uuid), system_message=False)
+        self._send(self._socket, msg)
 
     def show(self):
         """
@@ -1119,7 +1128,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         elif not self.shiftPressed and event.key() == QtCore.Qt.Key_Return:
             self.sendmsg.emit(event.key())
         else:
-            super(MessageBox, self).keyPressEvent(event)
+            super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event: QtGui.QKeyEvent) -> None:
         """
@@ -1137,12 +1146,12 @@ class MessageBox(QtWidgets.QPlainTextEdit):
 class ListWidget(QtWidgets.QListWidget):
 
     def __init__(self, parent: QtWidgets.QWidget):
-        super(ListWidget, self).__init__(parent)
+        super().__init__(parent)
 
     def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
         for item in self.selectedItems():
             item.setSelected(False)
-        super(ListWidget, self).focusOutEvent(event)
+        super().focusOutEvent(event)
 
 
 if __name__ == "__main__":
