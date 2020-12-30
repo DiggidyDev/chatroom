@@ -36,12 +36,15 @@ class Message(_BaseObj):
     def __bytes__(self):
         return pickle.dumps(dict(self))
 
+    def __getitem__(self, item):
+        return dict(self)[item]
+
     def __iter__(self):
         given_args = {k: v for k, v in vars(Message).items()}
         given_args.update(vars(self))
         for k, v in sorted(
                 [(k, v) for k, v in given_args.items() if k in self.__class_args() and v is not None],
-                key=lambda x: x[0]
+                key=lambda x: x[0].strip("_")
         ):
             if k.startswith("_"):
                 k = k[1:]
@@ -107,13 +110,3 @@ class Message(_BaseObj):
     @uuid.setter
     def uuid(self, value):
         self._uuid = value
-
-
-my_dict = {
-    "content": "hello",
-    "system_message": False,
-    "data": "hi"
-}
-
-a = Message(**my_dict)
-print(dict(a))
