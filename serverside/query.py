@@ -10,17 +10,17 @@ from utils.fmt import hash_pw
 class MessageQuery(_BaseQuery):
 
     def __init__(self):
-        self._conn = sqlite3.connect("messages.db", check_same_thread=False)
-        self._cursor = self.conn.cursor()
+        self.__conn = sqlite3.connect("messages.db", check_same_thread=False)
+        self.__cursor = self.__conn.cursor()
 
-        super().__init__(self._conn, self._cursor)
+        super().__init__(self.__conn, self.__cursor)
         self.create_table_if_not_exists("messages")
 
     def add_message(self, message: Message):
         self.cursor.execute(f"""INSERT INTO messages (?, ?, ?, ?, ?)
         VALUES (?, ?, ?, ?, ?)""", (*Message.TABLE_COLUMNS,
                                     message.content, message.uuid, message.room.uuid,
-                                    message.sender.uuid, message.system_message))
+                                    message.user.uuid, message.system_message))
 
     def fetch_message_by_uuid(self, uuid: str) -> Message:
         self.cursor.execute(f"""SELECT * FROM messages WHERE message_uuid = ?""", (uuid,))
