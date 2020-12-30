@@ -1,52 +1,62 @@
 import sqlite3
 from typing import Tuple, Union, Optional
 
-from clientside.user import User
-from serverside.message import Message
+from bases import _BaseQuery
+from message import Message
+from user import User
 from utils.fmt import hash_pw
 
 
-class MessageQuery:
+class MessageQuery(_BaseQuery):
 
     def __init__(self):
-        self.CONN = sqlite3.connect("messages.db", check_same_thread=False)
-        self.CURSOR = self.CONN.cursor()
+        self._conn = sqlite3.connect("messages.db", check_same_thread=False)
+        self._cursor = self.conn.cursor()
 
-    def add_message(self,
-                    message: Message):
-        pass
+        super().__init__(self._conn, self._cursor)
+        self.create_table_if_not_exists("messages")
+
+    def add_message(self, message: Message):
+        self.cursor.execute(f"""INSERT INTO messages (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)""", (*Message.TABLE_COLUMNS,
+                                    message.content, message.uuid, message.room.uuid,
+                                    message.sender.uuid, message.system_message))
+
+    def fetch_message_by_uuid(self, uuid: str) -> Message:
+        self.cursor.execute(f"""SELECT * FROM messages WHERE message_uuid = ?""", (uuid,))
+        record = self.cursor.fetchone()
+
+        data = Message.data_format_from_tuple(record)
+        message = Message.from_uuid(**data)
+        return message
 
 
-class UserQuery:
+class UserQuery(_BaseQuery):
 
     def __init__(self):
-        self.CONN = sqlite3.connect("users.db", check_same_thread=False)
-        self.CURSOR = self.CONN.cursor()
+        self.__conn = sqlite3.connect("users.db", check_same_thread=False)
+        self.__cursor = self.__conn.cursor()
 
-    def add_user(self,
-                 user: User,
-                 password):
+        super().__init__(self.__conn, self.__cursor)
+        self.create_table_if_not_exists("accounts")
+
+    def add_user(self, user: User, password: str):
         uuid = str(user.uuid)
         name = user.name
         email = user.get_email()
         pw_hash = hash_pw(password, uuid)
-        self.CONN.execute("""INSERT INTO accounts (uuid, name, pw_hash, email)
-        VALUES (?, ?, ?, ?)""", (uuid, name, pw_hash, email, ))
-        self.CONN.commit()
+        self.cursor.execute("""INSERT INTO accounts (uuid, name, pw_hash, email)
+                            VALUES (?, ?, ?, ?)""", (uuid, name, pw_hash, email))
+        self.conn.commit()
 
-    def is_username_available(self,
-                              username: str) -> bool:
-        self.CURSOR.execute("""SELECT name FROM accounts WHERE name = ?""", (username,))
-        record = self.CURSOR.fetchone()
+    def is_username_available(self, username: str) -> bool:
+        self.cursor.execute("""SELECT name FROM accounts WHERE name = ?""", (username,))
 
+        record = self.cursor.fetchone()
         return False if record else True
 
-    def does_user_email_exist(self,
-                              email: str,
-                              return_pw_hash: bool = False,
-                              return_uuid: bool = False) -> Union[
-        str, Tuple[Optional[str], ...], bool, Tuple[
-            int, Tuple[Optional[str], ...]]]:
+    def does_user_email_exist(self, email: str, return_pw_hash: bool = False, return_uuid: bool = False)\
+            -> Union[str, Tuple[Optional[str], ...], bool, Tuple[int, Tuple[Optional[str], ...]]]:
         """
         Searches for the email in the user database,
         returning whether a match was found or not.
@@ -58,44 +68,29 @@ class UserQuery:
         :param email: The target email to search for.
         :return: A boolean indicating the result of the search.
         """
+
         if return_pw_hash:
-            return self.get_pw_hash_by("email", email)
+            return self.fetch_pw_hash_by("email", email)
         if return_uuid:
             return self.fetch_user_data_by("email", email)[1]
 
         if not return_uuid and not return_pw_hash:
-            self.CURSOR.execute("SELECT email FROM accounts WHERE email = ?", (email,))
-            record = self.CURSOR.fetchone()
+            self.cursor.execute("SELECT email FROM accounts WHERE email = ?", (email,))
+            record = self.cursor.fetchone()
 
             return True if record else False
 
-        return self.get_pw_hash_by("email", email) if return_pw_hash else self.fetch_user_data_by(email)
+        return self.fetch_pw_hash_by("email", email) if return_pw_hash else self.fetch_user_data_by("email", email)
 
-    def create_table_if_not_exists(self,
-                                   table_name: str):
-        if table_name.lower() == "accounts":
-            self.CURSOR.execute("""CREATE TABLE IF NOT EXISTS accounts
-            (uuid varchar(36), name varchar(24), pwhash text, friends text,
-            email text, blockedusers text, nickname text, status int,
-            friendrequests text, rooms text)""")
+    def fetch_user_data_by(self, datatype: str, data: ...) -> Tuple[int, Tuple[Union[str, None], ...]]:
+        self.cursor.execute(f"""SELECT status, uuid, name, friends, blockedusers, nickname, friendrequests, email
+                            FROM accounts WHERE {datatype} = ?""", (data,))
 
-            self.CONN.commit()
+        user_data = self.cursor.fetchone()
+        return user_data
 
-    @staticmethod
-    def drop_table(self,
-                   table_name: str):
-        print(table_name)
+    def fetch_pw_hash_by(self, datatype: str, data: ...) -> str:
+        self.cursor.execute(f"SELECT pwhash FROM accounts WHERE {datatype} = ?", (data,))
 
-    def fetch_user_data_by(self,
-                           datatype: str,
-                           data: ...) -> Tuple[int, Tuple[Union[str, None], ...]]:
-        for user_data in self.CURSOR.execute(f"""SELECT status, uuid, name, friends, blockedusers, nickname, friendrequests, email
-         FROM accounts WHERE {datatype} = ?""", (data,)):
-            return user_data
-
-    def get_pw_hash_by(self,
-                       datatype: str,
-                       data: str) -> str:
-        for i in self.CURSOR.execute(f"SELECT pwhash FROM accounts WHERE {datatype} = ?", (data,)):
-            self.CONN.commit()
-            return i
+        pw_hash = self.cursor.fetchone()
+        return pw_hash
