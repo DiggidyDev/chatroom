@@ -3,12 +3,17 @@ from utils.update import get_version
 
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtCore import QUrl
+import clientside.client
 
 
 class ViewSlots:
 
-    def change_fonts():
-        pass
+    @staticmethod
+    def change_fonts(widget: clientside.client.Client):
+        try:
+            widget.toggle_comic_sans()
+        except Exception as e:
+            print(e)
 
 
 class HelpSlots:
