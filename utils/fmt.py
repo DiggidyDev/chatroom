@@ -1,17 +1,17 @@
 import hashlib
 import pickle
 import re
-from typing import Union
 from datetime import datetime
+from typing import Union
 
 from PyQt5 import QtWidgets
 
-from clientside.user import User
+from user import User
+from message import Message
 
 
 def _get_explicit_words() -> str:
     import pkgutil
-    import clientside
 
     return pkgutil.get_data("clientside", "explicit_words_list.txt").decode("utf-8")
 
@@ -19,10 +19,7 @@ def _get_explicit_words() -> str:
 EXPLICIT_WORDS = _get_explicit_words()
 
 
-def content(*,
-            message_content: str,
-            system_message: bool,
-            user: User) -> dict:
+def content(*, message_content: str, system_message: bool, user: User) -> dict:
     """
     Creates a message-friendly format for sending
     messages between the client and server.
@@ -35,18 +32,18 @@ def content(*,
     """
     struct = {
         "content": message_content,
-        "system-message": system_message,
+        "system_message": system_message,
         "user": user
     }
 
     return struct
 
 
-def decode_bytes(bytes_to_decode: bytes) -> Union[str, dict, tuple, User]:
+def decode_bytes(bytes_to_decode: bytes) -> Union[str, dict, tuple, User, Message]:
     return pickle.loads(bytes_to_decode)
 
 
-def encode_str(obj_to_encode: Union[str, dict, tuple, User]) -> bytes:
+def encode_str(obj_to_encode: Union[str, dict, tuple, User, Message]) -> bytes:
     return pickle.dumps(obj_to_encode)
 
 
@@ -69,8 +66,7 @@ def hash_pw(password: str, uuid: str) -> str:
 
 
 # noinspection PyTypeHints
-def update_msg_list(widget: QtWidgets.QMainWindow,
-                    received: dict):
+def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
     if "user" in received.keys():
         item = QtWidgets.QListWidgetItem()
 
@@ -88,7 +84,7 @@ def update_msg_list(widget: QtWidgets.QMainWindow,
 
         current_time = datetime.now()
 
-        if received['system-message']:
+        if received['system_message']:
             if received['content'] == "Initial connection.":
                 item.setText(f"{sender} joined.")
             elif received['content'] == "Leaving":
@@ -96,7 +92,7 @@ def update_msg_list(widget: QtWidgets.QMainWindow,
             else:
                 item.setText(received["content"])
 
-        elif not received['system-message']:
+        elif not received['system_message']:
             if hasattr(widget, "toggleExplicitLanguageFilter") and widget.toggleExplicitLanguageFilter.isChecked():
                 message_content = filter_content(message_content)
 
@@ -110,8 +106,7 @@ def update_msg_list(widget: QtWidgets.QMainWindow,
             return
 
 
-def update_user_list(widget: QtWidgets.QMainWindow,
-                     recv_content: dict):
+def update_user_list(widget: QtWidgets.QMainWindow, recv_content: dict):
     endings = {" was kicked.", " left."}
 
     if recv_content["content"] == "Initial connection.":
