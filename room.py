@@ -4,7 +4,7 @@ from secrets import token_bytes
 from uuid import UUID
 
 
-class Room(ABC, _BaseObj):
+class Room(_BaseObj):
     """
     Creating the Room as an abstract base class will
     mean that if it wishes to be inherited from, all
