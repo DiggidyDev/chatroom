@@ -7,7 +7,7 @@ from typing import Union
 
 from PyQt5 import QtCore, QtWidgets
 
-from clientside.user import User
+from user import User
 from serverside import query
 from utils import fmt
 from utils.fmt import update_msg_list
@@ -74,7 +74,8 @@ class Server(QtWidgets.QMainWindow):
                 else:
                     self.handle_conn(k, mask)
 
-    def conn_single(self) -> None:
+    @staticmethod
+    def conn_single() -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((HOST, PORT))
 
@@ -101,9 +102,7 @@ class Server(QtWidgets.QMainWindow):
                 elif isinstance(v, User) and str(v) == value:
                     return client
 
-    def handle_conn(self,
-                    key: selectors.SelectorKey,
-                    mask: int):
+    def handle_conn(self, key: selectors.SelectorKey, mask: int):
         sock: Union[Server.SCKT_TYPE, socket.socket] = key.fileobj
         data = key.data
 
@@ -137,9 +136,10 @@ class Server(QtWidgets.QMainWindow):
                                                       system_message=True))
 
             if recv_bytes:
-                recv_content = fmt.decode_bytes(recv_bytes)
+                msg_obj = fmt.decode_bytes(recv_bytes)
+                recv_content = dict(msg_obj)
                 # print(f"RECV: {recv_content['content']} from {sender.get_uuid()} - {sender.nickname}")
-                if recv_content['system-message']:
+                if recv_content['system_message']:
                     if recv_content['content'] == "Query":
                         self.handle_query(recv_content, sock)
 
@@ -188,8 +188,8 @@ class Server(QtWidgets.QMainWindow):
                                                       recv_content["data"])
                 sock.sendall(fmt.encode_str(user_tuple))
             elif recv_content["get"] == "password":
-                pw_hash_tuple = user_query.get_pw_hash_by(recv_content["datatype"],
-                                                     recv_content["data"])
+                pw_hash_tuple = user_query.fetch_pw_hash_by(recv_content["datatype"],
+                                                            recv_content["data"])
                 sock.sendall(fmt.encode_str(pw_hash_tuple[0]))
 
         elif "create" in recv_content.keys():
