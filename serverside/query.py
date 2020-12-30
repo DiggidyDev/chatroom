@@ -45,7 +45,7 @@ class UserQuery(_BaseQuery):
         name = user.name
         email = user.get_email()
         pw_hash = hash_pw(password, uuid)
-        self.cursor.execute("""INSERT INTO accounts (uuid, name, pw_hash, email)
+        self.cursor.execute("""INSERT INTO accounts (uuid, name, pwhash, email)
                             VALUES (?, ?, ?, ?)""", (uuid, name, pw_hash, email))
         self.conn.commit()
 
