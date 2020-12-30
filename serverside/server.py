@@ -136,9 +136,8 @@ class Server(QtWidgets.QMainWindow):
                                                       system_message=True))
 
             if recv_bytes:
-                msg_obj = fmt.decode_bytes(recv_bytes)
-                recv_content = dict(msg_obj)
-                # print(f"RECV: {recv_content['content']} from {sender.get_uuid()} - {sender.nickname}")
+                recv_content = fmt.decode_bytes(recv_bytes)
+                # print(f"RECV: {recv_content['content']} from {user.get_uuid()} - {user.nickname}")
                 if recv_content['system_message']:
                     if recv_content['content'] == "Query":
                         self.handle_query(recv_content, sock)
@@ -185,7 +184,7 @@ class Server(QtWidgets.QMainWindow):
         if "get" in recv_content.keys():
             if recv_content["get"] == "user":
                 user_tuple = user_query.fetch_user_data_by(recv_content["datatype"],
-                                                      recv_content["data"])
+                                                           recv_content["data"])
                 sock.sendall(fmt.encode_str(user_tuple))
             elif recv_content["get"] == "password":
                 pw_hash_tuple = user_query.fetch_pw_hash_by(recv_content["datatype"],
