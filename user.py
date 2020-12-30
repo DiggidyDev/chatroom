@@ -59,6 +59,8 @@ class User(_BaseObj):
 
     @status.setter
     def status(self, value):
+        if not value:
+            value = 1
         if isinstance(value, int):
             self._status = value
         else:
