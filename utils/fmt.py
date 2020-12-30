@@ -49,12 +49,15 @@ def encode_str(obj_to_encode: Union[str, dict, tuple, User, Message]) -> bytes:
 
 def filter_content(msg: str) -> str:
     pattern = EXPLICIT_WORDS.replace("\r\n", "|")
-    indices = [i.span() for i in re.finditer("|".join(sorted(pattern.split("|"), key=lambda x: len(x))), msg.lower())]
+    indices = [i.span() for i in re.finditer(" |".join(sorted(pattern.split("|"), key=lambda x: len(x))), f" {msg.lower()} ")]
     filtered_msg = list(msg)
 
     for start, end in indices:
-        for i in range(start, end):
-            filtered_msg[i] = "*"
+        for i in range(start, end-1):
+            try:
+                filtered_msg[i-1] = "*"
+            except IndexError:
+                pass
 
     filtered_msg = "".join(filtered_msg)
 
@@ -100,8 +103,8 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
 
         try:
             widget.msgList.addItem(item)
-        except RuntimeError:
-            return
+        except RuntimeError as e:
+            print(e)
 
 
 def update_user_list(widget: QtWidgets.QMainWindow, recv_content: dict):
