@@ -81,7 +81,7 @@ class Client(QtWidgets.QMainWindow):
                 if action != self.toggleCoolMode:
                     action.setFont(self.current_font)
 
-    def _toggle_comic_sans(self) -> None:
+    def toggle_comic_sans(self) -> None:
         """
         [CHANGE ALL WIDGETS' FONTS]
 
@@ -418,7 +418,7 @@ class Client(QtWidgets.QMainWindow):
         self.aboutChatroom.setText(_translate("self", "About Chatroom"))
 
     def setup_ui(self):
-        from clientside.actionslots import HelpSlots
+        from clientside.actionslots import HelpSlots, ViewSlots
 
         self.setObjectName("self")
         self.resize(578, 363)
@@ -780,7 +780,7 @@ class Client(QtWidgets.QMainWindow):
 
         self.toggleCoolMode = QtWidgets.QAction(self)
         self.toggleCoolMode.setCheckable(True)
-        self.toggleCoolMode.triggered.connect(self._toggle_comic_sans)
+        self.toggleCoolMode.triggered.connect(lambda x=self: ViewSlots.change_fonts(self))
 
         font = QtGui.QFont()
         font.setFamily("Comic Sans MS")
@@ -1120,6 +1120,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
         """
         if len(self.toPlainText()) >= self.CHAR_LIMIT and event.key().real < 2**24:
             self.setPlainText(self.toPlainText()[:self.CHAR_LIMIT])
+
             return
 
         if not self.shiftPressed and event.key() == QtCore.Qt.Key_Shift:
@@ -1144,13 +1145,25 @@ class MessageBox(QtWidgets.QPlainTextEdit):
 
 class ListWidget(QtWidgets.QListWidget):
 
-    def __init__(self, parent: QtWidgets.QWidget):
+    def __init__(self, parent: Client):
         super().__init__(parent)
 
     def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
         for item in self.selectedItems():
             item.setSelected(False)
         super().focusOutEvent(event)
+
+    def scrollToBottom(self) -> None:
+        """
+        Only scrolls to the bottom if a new item is added
+        and the user is already at the bottom of the list,
+        otherwise stay in its current position.
+
+        :return:
+        """
+
+        if self.verticalScrollBar().maximum() == self.verticalScrollBar().sliderPosition():
+            super().scrollToBottom()
 
 
 if __name__ == "__main__":
