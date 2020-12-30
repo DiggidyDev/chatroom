@@ -21,7 +21,7 @@ class Message(_BaseObj):
                  get: str = None,
                  message_uuid: Optional[str] = None,
                  room: str = None,
-                 sender: Union[User, str] = None):
+                 user: Union[User, str] = None):
         self._content = content
         self._system_message = system_message
 
@@ -30,7 +30,7 @@ class Message(_BaseObj):
         self.datatype = datatype
         self.get = get
         self._room = room
-        self._sender = sender
+        self._user = user
         self._uuid: UUID = UUID(bytes=token_bytes(16)) if message_uuid is None else UUID(message_uuid)
 
     def __bytes__(self):
@@ -79,16 +79,16 @@ class Message(_BaseObj):
         self._room = value
 
     @property
-    def sender(self) -> User:
-        return self._sender
+    def user(self) -> User:
+        return self._user
 
-    @sender.setter
-    def sender(self, value):
+    @user.setter
+    def user(self, value):
         if isinstance(value, User):
-            self._sender = value.uuid
+            self._user = value.uuid
         else:
             try:
-                self._sender = UUID(value)
+                self._user = UUID(value)
             except ValueError:
                 raise
 
