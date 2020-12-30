@@ -49,7 +49,7 @@ def encode_str(obj_to_encode: Union[str, dict, tuple, User, Message]) -> bytes:
 
 def filter_content(msg: str) -> str:
     pattern = EXPLICIT_WORDS.replace("\r\n", "|")
-    indices = [i.span() for i in re.finditer(pattern, msg.lower())]
+    indices = [i.span() for i in re.finditer("|".join(sorted(pattern.split("|"), key=lambda x: len(x))), msg.lower())]
     filtered_msg = list(msg)
 
     for start, end in indices:
@@ -91,11 +91,9 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
                 item.setText(f"{sender} left.")
             else:
                 item.setText(received["content"])
-
         elif not received['system_message']:
             if hasattr(widget, "toggleExplicitLanguageFilter") and widget.toggleExplicitLanguageFilter.isChecked():
                 message_content = filter_content(message_content)
-
             item.setText(f"{sender}: {message_content}")
 
         item.setToolTip(fr"""Timestamp: {current_time.strftime("%Y/%m/%d - %H:%M:%S")}""")
