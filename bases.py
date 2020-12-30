@@ -59,7 +59,7 @@ class _BaseQuery:
 
             elif table_name.lower() == "messages":
                 self.cursor.execute("""CREATE TABLE IF NOT EXISTS messages
-                (content text, message_uuid varchar(36), room varchar(36), sender varchar(36),
+                (content text, message_uuid varchar(36), room varchar(36), user varchar(36),
                 system_message integer)""")
 
             else:
