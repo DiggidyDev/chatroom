@@ -119,7 +119,7 @@ class Client(QtWidgets.QMainWindow):
             "get": "password"
         }
 
-        self._send(self._socket, fmt.encode_str(pw_q))
+        self._send(self._socket, pw_q)
 
         pw_hash = fmt.decode_bytes(self._socket.recv(4096))
 
@@ -164,7 +164,7 @@ class Client(QtWidgets.QMainWindow):
                 "user": self.user
             }
 
-            self._send(self._socket, fmt.encode_str(initial_content))
+            self._send(self._socket, initial_content)
 
             while not self.stop_event.is_set():
                 recv_data = s.recv(4096)
@@ -235,7 +235,7 @@ class Client(QtWidgets.QMainWindow):
                     "datatype": "email"
                 }
 
-                _client._send(_client._socket, fmt.encode_str(email_q))
+                _client._send(_client._socket, email_q)
                 user_tuple = fmt.decode_bytes(_client._socket.recv(4096))
                 print(user_tuple)
                 if user_tuple is not None:
@@ -874,8 +874,7 @@ class Client(QtWidgets.QMainWindow):
         self.setTabOrder(self.chatroomComboBox, self.pushButton)
 
     def send_message(self, content):
-        msg = Message(content=content, room=self.current_room.uuid,
-                      sender=str(self.user.uuid), system_message=False)
+        msg = Message(content=content, user=self.user, system_message=False)
         self._send(self._socket, msg)
 
     def show(self):
