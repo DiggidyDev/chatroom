@@ -3,12 +3,12 @@ from secrets import token_bytes
 from typing import Tuple, Union
 from uuid import UUID
 
-from utils.debug import debug
+from bases import _BaseObj
 
 Activity = types.SimpleNamespace(ONLINE=1, OFFLINE=0)
 
 
-class User:
+class User(_BaseObj):
 
     _email: Union[str, None]
 
