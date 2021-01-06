@@ -3,11 +3,12 @@ from PyQt5 import QtWidgets, QtCore
 
 class CustomDialog(QtWidgets.QDialog):
 
-    def __init__(self, *, window_title, message):
+    def __init__(self, *, window_title, message, font):
         super().__init__()
         self.close()
         self.window_title = window_title
         self.message = message
+        self._font = font
         self.setup_ui()
 
     def close(self) -> None:
@@ -44,9 +45,11 @@ class CustomDialog(QtWidgets.QDialog):
         self.label.setAlignment(QtCore.Qt.AlignCenter)
         self.label.setTextFormat(QtCore.Qt.MarkdownText)
         self.label.setOpenExternalLinks(True)
+        self.label.setFont(self._font)
 
         self.pushButton = QtWidgets.QPushButton(self)
         self.pushButton.setObjectName(u"pushButton")
+        self.pushButton.setFont(self._font)
         self.pushButton.clicked.connect(self.close)
 
         self.gridLayout = QtWidgets.QGridLayout(self)
