@@ -68,10 +68,13 @@ def hash_pw(password: str, uuid: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), uuid.encode("utf-8"), 200000).hex()
 
 
-# noinspection PyTypeHints
-def update_msg_list(widget: QtWidgets.QMainWindow, received: dict):
+# noinspection PyTypeHints,PyTypeChecker
+def update_msg_list(widget: QtWidgets.QMainWindow, received: dict, *, cache=None):
     if "user" in received.keys():
         item = QtWidgets.QListWidgetItem()
+
+        if hasattr(widget, "current_font"):
+            item.setFont(widget.current_font)
 
         if isinstance(received, bytes):
             received = decode_bytes(received)
@@ -121,6 +124,10 @@ def update_user_list(widget: QtWidgets.QMainWindow, recv_content: dict):
                 widget.userList.addItem(user_item)
         else:
             user_item = QtWidgets.QListWidgetItem()
+
+            if hasattr(widget, "current_font"):
+                user_item.setFont(widget.current_font)
+
             user_item.setText(new_user.name)
             widget.userList.addItem(user_item)
 
@@ -138,3 +145,9 @@ def update_user_list(widget: QtWidgets.QMainWindow, recv_content: dict):
 def is_valid_email(email: str) -> re.Match:
     email_pattern = r"^(\w+[\+\.\w-]*@)([\w-]+\.)*\w+[\w-]*\.([a-z]{2,4}|d+)$"
     return re.search(email_pattern, email)
+
+
+def is_valid_section_name(section):
+    sect_pattern = r"^[a-zA-Z]{3,20}$"
+    if not re.search(sect_pattern, section):
+        raise NameError("Please ensure your theme name is 3-20 chars long, only containing A-z")
