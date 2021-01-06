@@ -11,13 +11,23 @@ from user import User
 from serverside import query
 from utils import fmt
 from utils.fmt import update_msg_list
+from utils.cache import Cache
 
 PORT = 65501
 HOST = socket.gethostbyname(socket.gethostname())
 
 
-user_query = query.UserQuery()
-msg_query = query.MessageQuery()
+msg_cache = Cache(max_size=2**15)
+room_cache = Cache()
+user_cache = Cache()
+
+msg_query = query.MessageQuery(cache=msg_cache)
+room_query = query.RoomQuery(cache=room_cache)
+user_query = query.UserQuery(cache=user_cache)
+
+msg_query.room_query, msg_query.user_query = room_query, user_query
+room_query.msg_query, room_query.user_query = msg_query, user_query
+user_query.msg_query, user_query.room_query = msg_query, room_query
 
 
 class Server(QtWidgets.QMainWindow):
@@ -25,8 +35,6 @@ class Server(QtWidgets.QMainWindow):
 
     def __init__(self, host: str, port: int):
         super().__init__()
-
-        user_query.create_table_if_not_exists("accounts")
 
         self.conn = (host, port)
         self.clients = []
@@ -129,11 +137,21 @@ class Server(QtWidgets.QMainWindow):
                 sock.close()
                 self.clients.remove(client)
 
+
                 if client['user'] is not None:
+                    client['user'].status = 0
+                    user_query.update_user_status(client['user'])
+
                     self.send_message(f"{client['user']} left.")
-                    update_msg_list(self, fmt.content(message_content=f"{client['user']} left.",
-                                                      user=self.user,
-                                                      system_message=True))
+                    msg = fmt.content(message_content=f"{client['user']} left.",
+                                                      user=client['user'],
+                                                      system_message=True)
+                    update_msg_list(self, msg)
+                    msg["content"] = "User left."
+                    msg_query.add_message(msg)
+
+                    if client['user'].is_anonymous():
+                        user_query.delete_user(client["user"])
 
             if recv_bytes:
                 recv_content = fmt.decode_bytes(recv_bytes)
@@ -143,7 +161,7 @@ class Server(QtWidgets.QMainWindow):
                         self.handle_query(recv_content, sock)
 
                     elif recv_content['content'] == "Initial connection.":
-                        sender = recv_content["user"]
+                        sender: User = recv_content["user"]
 
                         # Reserve UUID for when initial connection message is received
                         # But fill in other necessary details
@@ -151,17 +169,26 @@ class Server(QtWidgets.QMainWindow):
                             "conn": sock,
                             "user": None
                         }
+
                         self.clients.append(client_details)
                         item = QtWidgets.QListWidgetItem()
                         item.setText(f"{sender}")
-                        self.get_client_by("conn", sock)["user"] = sender
+                        self.get_client_by("conn", sock)["user"]: User = sender
                         self.userList.addItem(item)
 
-                        # SEND CURRENT LIST OF USERS IN CHATROOM
-                        # fix pickling errors :/
+                        if sender.is_anonymous():
+                            user_query.add_user(sender)
+
+                        msg_query.add_message(recv_content)
+
                         recv_content["userlist"] = [
                             self.userList.item(x).text() for x in range(self.userList.count())
                         ]
+
+                        recv_content["rooms"] = user_query.fetch_all_rooms_for(sender)
+                else:
+                    msg_query.add_message(recv_content)
+
                 data.outb += fmt.encode_str(recv_content) if "Query" not in recv_content["content"] else b""
 
         # Outgoing data
