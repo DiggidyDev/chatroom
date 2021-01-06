@@ -45,10 +45,13 @@ def get_live_version() -> str:
     :return:
     """
     import json  # For converting the requested string into JSON
-    import urllib.request  # Querying for the current live version
+    import urllib.request, urllib.error  # Querying for the current live version
 
     # TODO: Try/except catch any status errors
-    live_version = json.loads(urllib.request.urlopen("https://diggydev.co.uk/chatroom/version.json").read())["live_bin"]
+    try:
+        live_version = json.loads(urllib.request.urlopen("https://diggydev.co.uk/chatroom/version.json").read())["live_bin"]
+    except urllib.error.URLError as e:
+        print("BEEP BOOP SOMETHING GONE WRONG")
 
     return live_version
 
