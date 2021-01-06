@@ -1,29 +1,36 @@
-from abc import ABC
-from bases import _BaseObj
 from secrets import token_bytes
 from uuid import UUID
 
+from bases import BaseObj, TABLE_COLUMNS_ROOM
 
-class Room(_BaseObj):
-    """
-    Creating the Room as an abstract base class will
-    mean that if it wishes to be inherited from, all
-    of its abstract methods must be overridden.
-    """
 
-    def __init__(self):
-        self._name = None
-        self._uuid = UUID(bytes=token_bytes(16))
+class Room(BaseObj):
+
+    TABLE_COLUMNS = TABLE_COLUMNS_ROOM
+
+    def __init__(self,
+                 name,
+                 *,
+                 invitedusers=None,
+                 password=None,
+                 uuid=UUID(bytes=token_bytes(16))):
+
+        self._invites = invitedusers
+        self._name = name
+        self._password = password
+        self._uuid = uuid if uuid else UUID(bytes=token_bytes(16))
+
+        super().__init__()
 
     def __str__(self):
         return str(self.uuid)
 
     @property
     def invites(self):
-        return
+        return self._invites
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
     @name.setter
@@ -37,24 +44,3 @@ class Room(_BaseObj):
     @uuid.setter
     def uuid(self, value):
         self._uuid = value
-
-    def update(self):
-        self._name = None
-
-
-class Chatroom(Room):
-
-    def __init__(self):
-        super().__init__()
-
-    def abc_method(self) -> None:
-        super()
-
-
-class Gameroom(Room):
-
-    def __init__(self):
-        super().__init__()
-
-
-a = Gameroom()
