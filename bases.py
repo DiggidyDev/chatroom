@@ -1,9 +1,62 @@
 import sqlite3
 from abc import ABC, abstractmethod
+from typing import Union
 from uuid import UUID
 
 
-class _BaseObj(ABC):
+TABLE_COLUMNS_MSG = (
+    "content",
+    "message_uuid",
+    "room",
+    "created_at",
+    "user",
+    "system_message"
+)
+TABLE_COLUMNS_ROOM = (
+    "uuid",
+    "name",
+    "invitedusers",
+    "password"
+)
+TABLE_COLUMNS_USR = (
+    "uuid",
+    "name",
+    "pwhash",
+    "friends",
+    "email",
+    "blockedusers",
+    "nickname",
+    "status",
+    "friendrequests",
+    "rooms"
+)
+
+
+class BaseObj(ABC):
+
+    TABLE_COLUMNS: tuple
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def data_format_from_tuple(cls, t: tuple, *, return_instance=False) -> Union[None, dict, "BaseObj"]:
+        """
+        Will return None if the zip failed, usually from attempting
+        to instantiate a class with a non-iterable passed as 't'.
+        This tends to happen if data wasn't found from the DB.
+
+        :param t:
+        :param return_instance:
+        :return:
+        """
+        try:
+            data_format = {k: v for k, v in zip(cls.TABLE_COLUMNS, t) if v is not None}
+        except TypeError:
+            return None
+        if return_instance:
+            return cls(**data_format)
+        return data_format
 
     @property
     @abstractmethod
@@ -11,9 +64,10 @@ class _BaseObj(ABC):
 
 
 # TODO: Implement logging
-class _BaseQuery:
+class BaseQuery:
 
-    def __init__(self, _conn, _cursor):
+    def __init__(self, _cache: "Cache", _conn: sqlite3.Connection, _cursor: sqlite3.Cursor):
+        self.__cache = _cache
         self.__conn = _conn
         self.__cursor = _cursor
 
@@ -33,6 +87,18 @@ class _BaseQuery:
         """
         return ", ".join(f"{data[i]} {data[i+1]}" for i in range(0, len(data), 2))
 
+    def clear_cache_for(self, func: callable, *args, **kwargs):
+        del self.cache[str(func(*args, **kwargs).uuid)]
+        return self.cache.get(func(*args, **kwargs))
+
+    @property
+    def cache(self) -> "Cache":
+        return self.__cache
+
+    @cache.setter
+    def cache(self, value: "Cache"):
+        self.__cache = value
+
     @property
     def conn(self) -> sqlite3.Connection:
         return self.__conn
@@ -51,16 +117,41 @@ class _BaseQuery:
 
     def create_table_if_not_exists(self, table_name: str, *data):
         if not data:
-            if table_name.lower() == "accounts":
-                self.cursor.execute("""CREATE TABLE IF NOT EXISTS accounts
-                (uuid varchar(36), name varchar(24), pwhash text, friends text,
-                email text, blockedusers text, nickname text, status int,
-                friendrequests text, rooms text)""")
 
-            elif table_name.lower() == "messages":
-                self.cursor.execute("""CREATE TABLE IF NOT EXISTS messages
-                (content text, message_uuid varchar(36), room varchar(36), user varchar(36),
-                system_message integer)""")
+            if table_name.lower() == "messages":
+                self.cursor.execute("""CREATE TABLE IF NOT EXISTS messages (
+                _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                message_uuid CHAR(36),
+                room CHAR(36),
+                user CHAR(36),
+                system_message INT
+                )""")
+
+            elif table_name.lower() == "rooms":
+                self.cursor.execute("""CREATE TABLE IF NOT EXISTS rooms (
+                uuid CHAR(36),
+                name TEXT,
+                invitedusers TEXT DEFAULT "",
+                password TEXT DEFAULT NULL
+                )""")
+
+            elif table_name.lower() == "users":
+                self.cursor.execute("""CREATE TABLE IF NOT EXISTS users (
+                _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at DATE DEFAULT CURRENT_TIMESTAMP,
+                uuid CHAR(36),
+                name CHAR(24),
+                pwhash TEXT DEFAULT NULL,
+                friends TEXT DEFAULT "",
+                email TEXT DEFAULT NULL,
+                blockedusers TEXT "",
+                nickname TEXT DEFAULT NULL,
+                status INT DEFAULT 1,
+                friendrequests TEXT DEFAULT "",
+                rooms TEXT DEFAULT ""
+                )""")
 
             else:
                 return
@@ -70,6 +161,6 @@ class _BaseQuery:
 
         self.conn.commit()
 
-    @staticmethod
     def drop_table(self, table_name: str):
-        print(table_name)
+        self.cursor.execute("""DROP TABLE ?""", table_name)
+        self.conn.commit()
