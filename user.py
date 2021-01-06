@@ -1,16 +1,20 @@
 import types
 from secrets import token_bytes
-from typing import Tuple, Union
+from typing import Iterable, Tuple, Union
 from uuid import UUID
 
-from bases import _BaseObj
+from bases import BaseObj, TABLE_COLUMNS_USR
+from room import Room
 
 Activity = types.SimpleNamespace(ONLINE=1, OFFLINE=0)
 
 
-class User(_BaseObj):
+class User(BaseObj):
+
+    TABLE_COLUMNS = TABLE_COLUMNS_USR
 
     _email: Union[str, None]
+    _rooms: None
 
     def __init__(self, nickname: str = None,
                  existing_data: Union[tuple, bool] = False,
@@ -21,15 +25,15 @@ class User(_BaseObj):
             self.blocked_users = []
             self.nickname = nickname
             self.username = nickname if registered_user else None
-
             self.status = Activity.ONLINE
             self.uuid = UUID(bytes=token_bytes(16))
+
+            super().__init__()
         else:
             self.__set_up_existing_user(existing_data)
 
     def __set_up_existing_user(self, data):
-        self.anonymous = False
-        self.friends = []
+        self.anonymous = data[7] is None
         self.online_friends = []
 
         self.blocked_users = data[4]
@@ -59,7 +63,7 @@ class User(_BaseObj):
 
     @status.setter
     def status(self, value):
-        if not value:
+        if value is None:
             value = 1
         if isinstance(value, int):
             self._status = value
@@ -98,6 +102,14 @@ class User(_BaseObj):
 
     def remove_friend(self, user):
         pass
+
+    @property
+    def rooms(self) -> Iterable[Room]:
+        return self._rooms
+
+    @rooms.setter
+    def rooms(self, value: Iterable[Room]):
+        self._rooms = value
 
     def send_friend_request(self, user):
         pass
