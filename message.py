@@ -39,6 +39,11 @@ class Message(BaseObj):
 
         super().__init__()
 
+    def __repr__(self):
+        return f"<type={self.__class__.__name__} system_message={not not self.system_message} " \
+               f"content={self.content!r} room={self.room!r} user={self.user!r} " \
+               f"timestamp={self.timestamp!r} uuid={self.uuid}>"
+
     def __bytes__(self):
         return pickle.dumps(dict(self))
 
@@ -49,7 +54,7 @@ class Message(BaseObj):
         given_args = {k: v for k, v in vars(Message).items()}
         given_args.update(vars(self))
         for k, v in sorted(
-                [(k, v) for k, v in given_args.items() if k in self.__class_args()
+                [(k, v) for k, v in given_args.items() if k in self.class_args()
                                                           and v is not None and k[-1] != "_"],
                 key=lambda x: x[0].strip("_")
         ):
@@ -61,7 +66,7 @@ class Message(BaseObj):
         return self.content
 
     @classmethod
-    def __class_args(cls):
+    def class_args(cls):
         return cls.__init__.__code__.co_names
 
     @property
