@@ -1,18 +1,19 @@
 from PyQt5 import QtWidgets, QtCore
 
+from .themes import ThemeUpdater
+
+style = ThemeUpdater()
+
 
 class CustomDialog(QtWidgets.QDialog):
 
     def __init__(self, *, window_title, message, font):
         super().__init__()
-        self.close()
         self.window_title = window_title
         self.message = message
         self._font = font
         self.setup_ui()
-
-    def close(self) -> None:
-        super(CustomDialog, self).close()
+        style.to_current_theme(self)
 
     def retranslate_ui(self):
         self.setWindowTitle(QtCore.QCoreApplication.translate(self.window_title, self.window_title, None))
@@ -44,6 +45,7 @@ class CustomDialog(QtWidgets.QDialog):
         self.label.setObjectName(u"label")
         self.label.setAlignment(QtCore.Qt.AlignCenter)
         self.label.setTextFormat(QtCore.Qt.MarkdownText)
+        self.label.setWordWrap(True)
         self.label.setOpenExternalLinks(True)
         self.label.setFont(self._font)
 
