@@ -1,6 +1,6 @@
 import types
 from secrets import token_bytes
-from typing import Iterable, Tuple, Union
+from typing import Iterable, List, Tuple, Union
 from uuid import UUID
 
 from bases import BaseObj, TABLE_COLUMNS_USR
@@ -41,8 +41,9 @@ class User(BaseObj):
         self.friends = data[3]
         self.nickname = data[5]
         self.username = data[2]
+        self._rooms = data[8]
         self.status = data[0]
-        self.email = data[7]
+        self._email = data[7]
         self.uuid = data[1]
 
         return self
@@ -52,6 +53,14 @@ class User(BaseObj):
 
     def __int__(self):
         return len(self.friends) if not self.is_anonymous() else None
+
+    @property
+    def email(self):
+        return self._email if not self.is_anonymous() else None
+
+    @email.setter
+    def email(self, value):
+        self._email = value if not self.is_anonymous() else None
 
     @property
     def name(self) -> str:
@@ -82,9 +91,6 @@ class User(BaseObj):
     def from_existing_data(cls, data: Tuple) -> "User":
         return cls().__set_up_existing_user(data)
 
-    def get_email(self) -> str:
-        return self._email if not self.is_anonymous() else None
-
     def get_mutual_friends(self, user) -> list:
         pass
 
@@ -104,7 +110,7 @@ class User(BaseObj):
         pass
 
     @property
-    def rooms(self) -> Iterable[Room]:
+    def rooms(self) -> List[Room]:
         return self._rooms
 
     @rooms.setter
@@ -113,9 +119,6 @@ class User(BaseObj):
 
     def send_friend_request(self, user):
         pass
-
-    def set_email(self, email: str):
-        self._email = email if not self.is_anonymous() else None
 
     def set_nickname(self, new_nickname: str = None):
         return
