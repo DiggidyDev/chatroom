@@ -2,13 +2,16 @@ import hashlib
 import socket
 import threading
 from typing import Iterable, Union
-from clientside import config
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 
+from clientside import config
 from message import Message
 from room import Room
 from ui.info import CustomDialog
+from ui.items import MessageWidgetItem
+from ui.menu import ThemeAction
+from ui.themes import ThemeUpdater
 from user import User
 from utils import fmt, update
 from utils.cache import Cache
@@ -17,6 +20,8 @@ HOST = "18.217.109.81"  # AWS hosting the server
 PORT = 65501  # Server listening to connections on this port
 
 NULL_BYTE = "\x00"
+
+style = ThemeUpdater()
 
 
 class Client(QtWidgets.QMainWindow):
@@ -33,15 +38,17 @@ class Client(QtWidgets.QMainWindow):
     ERRS: Union[str, None]
     HOST: str
     PORT: int
+    SRV_UUID: str
 
     conn_thread: threading.Thread
     current_font: QtGui.QFont
     default_font: QtGui.QFont
     kicked: bool
     login: "LoginDialog"
-    _socket: Union[socket.socket, None]
     stop_event: threading.Event
     user: Union[User, None]
+
+    _socket: Union[socket.socket, None]
 
     def __init__(self, host, port):
         super().__init__()
@@ -51,31 +58,40 @@ class Client(QtWidgets.QMainWindow):
         self.HOST = host
         self.ERRS = None
 
+        self.check_for_updates = False
+
         self.current_font = QtGui.QFont()
         self.current_font.setFamily("Microsoft New Tai Lue")
         self.default_font = QtGui.QFont()
         self.default_font.setFamily("Microsoft New Tai Lue")
+
         self.email = None
         self.kicked = False
+        self.most_recent_message: Message
         self.user = None
 
-        self._current_room: Union[Room]
-        self._msg_cache = Cache(max_size=2**10)
+        self._current_room: Union[Room, None]
+        self._msg_cache = Cache(max_size=2 ** 10)
         self._socket = None
 
-    @staticmethod
-    def _send(sock: socket.socket, data: Union[Message, dict]) -> None:
+    def _send(self, sock: socket.socket, data: Union[Message, dict]) -> None:
         if isinstance(data, Message):
+            self._msg_cache.cache_to("bottom", data)
+            self.update_recent_message(data)
+
             encoded = bytes(data)
         elif isinstance(data, dict):
-            encoded = bytes(Message(**data))
+            msg = Message(**data)
+            encoded = bytes(msg)
         try:
             sock.sendall((str(len(encoded)) + NULL_BYTE).encode("utf-8"))
             sock.sendall(encoded)
-        except ReferenceError:
+        except Exception as e:
+            print(e)
             print("OH NO")
 
-    def __recursive_font_change(self, parent: Union[QtWidgets.QMenu, QtCore.QObject]) -> None:
+    def __recursive_font_change(self, parent: Union[
+        QtWidgets.QMenu, QtCore.QObject]) -> None:
         if hasattr(parent, "children"):
             for child in parent.children():
                 self.__recursive_font_change(child)
@@ -88,6 +104,12 @@ class Client(QtWidgets.QMainWindow):
         for room in rooms:
             self.chatroomComboBox.addItem(room.name)
 
+    def toggle_alternate_row_colours(self):
+        self.msgList.setAlternatingRowColors(
+            not self.msgList.alternatingRowColors())
+        self.userList.setAlternatingRowColors(
+            not self.userList.alternatingRowColors())
+
     def toggle_comic_sans(self) -> None:
         """
         [CHANGE ALL WIDGETS' FONTS]
@@ -95,22 +117,51 @@ class Client(QtWidgets.QMainWindow):
         :return: None
         """
         if self.toggleCoolMode.isChecked():
+            self.chatroomComboBox.setStyleSheet(
+                self.chatroomComboBox.styleSheet() \
+                    .replace(f"font-family: \"{self.current_font.family()}\"",
+                             "font-family: \"Comic Sans MS\"")
+            )
             self.current_font.setFamily("Comic Sans MS")
         else:
+            self.chatroomComboBox.setStyleSheet(
+                self.chatroomComboBox.styleSheet() \
+                    .replace(f"font-family: \"{self.current_font.family()}\"",
+                             f"font-family: \"{self.default_font.family()}\"")
+            )
             self.current_font.setFamily(self.default_font.family())
 
         for child in self.menubar.children():
             self.__recursive_font_change(child)
 
-        for message in [self.msgList.item(i) for i in range(self.msgList.count())]:
+        for message in [self.msgList.item(i) for i in
+                        range(self.msgList.count())]:
             message.setFont(self.current_font)
 
-        for user in [self.userList.item(i) for i in range(self.userList.count())]:
+        for user in [self.userList.item(i) for i in
+                     range(self.userList.count())]:
             user.setFont(self.current_font)
 
-    def _toggle_user_buttons(self):
-        self.friendButton.setVisible(not self.toggleUserActionButtons.isChecked())
-        self.muteButton.setVisible(not self.toggleUserActionButtons.isChecked())
+        # FIX COMBOBOX VIEW
+        # p = self.chatroomComboBox.palette()
+        # p.setFont(self.current_font)
+
+    def toggle_user_list(self):
+        self.usersGroupBox.setVisible(not self.toggleUserList.isChecked())
+        if not self.toggleUserList.isChecked():
+            self.chatroomSizePolicy.setVerticalPolicy(
+                QtWidgets.QSizePolicy.Fixed)
+            self.chatroomGroupBox.setSizePolicy(self.chatroomSizePolicy)
+        else:
+            self.chatroomSizePolicy.setVerticalPolicy(
+                QtWidgets.QSizePolicy.Expanding)
+            self.chatroomGroupBox.setSizePolicy(self.chatroomSizePolicy)
+
+    def toggle_user_buttons(self):
+        self.friendButton.setVisible(
+            not self.toggleUserActionButtons.isChecked())
+        self.muteButton.setVisible(
+            not self.toggleUserActionButtons.isChecked())
 
     def check_password(self, password: str, salt: str) -> bool:
         """
@@ -122,14 +173,16 @@ class Client(QtWidgets.QMainWindow):
         :return: A boolean indicating whether the hashes match.
         """
 
-        attempted_pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200000)
+        attempted_pw_hash = hashlib.pbkdf2_hmac("sha256",
+                                                password.encode("utf-8"),
+                                                salt.encode("utf-8"), 200000)
 
         pw_q = {
-            "content": "Query",
+            "content"       : "Query",
             "system_message": True,
-            "data": self.email,
-            "datatype": "email",
-            "get": "password"
+            "data"          : self.email,
+            "datatype"      : "email",
+            "get"           : "password"
         }
 
         self._send(self._socket, pw_q)
@@ -169,29 +222,47 @@ class Client(QtWidgets.QMainWindow):
 
     def connect(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            print("INCOMING")
             if self._socket:
                 self._socket.close()
             s.connect((self.HOST, self.PORT))
             self._socket = s
 
             initial_content = {
-                "content": "Initial connection.",
+                "content"       : "Initial connection.",
                 "system_message": True,
-                "user": self.user
+                "user"          : self.user
             }
 
             self._send(self._socket, initial_content)
 
             while not self.stop_event.is_set():
-                recv_data = s.recv(4096)
+                read_length = ""
+                recv_data = None
+                rooms = None
+
+                while recv_data not in [b"\x00", b""]:
+                    recv_data = s.recv(1)
+                    read_length += recv_data.decode(
+                        "utf-8") if recv_data != b"\x00" else ""
+
+                if read_length != "":
+                    recv_data = s.recv(int(read_length))
+
                 if recv_data:
                     data = fmt.decode_bytes(recv_data)
                     if isinstance(data, bytes):
                         data = fmt.decode_bytes(data)
                     print(f"RECV: {data}")
                     if isinstance(data, dict):
+                        messages = data.pop("messages", None)
+
                         if data["system_message"]:
+                            rooms = data.pop("rooms", None)
+                            srv_user = data.pop("SRV", None)
+
+                            if srv_user:
+                                self.SRV_UUID = srv_user.uuid
+
                             if data["content"] == "You have been kicked.":
                                 # Modify kicked flag for showing kicked dialog on
                                 # connection abortion
@@ -199,25 +270,51 @@ class Client(QtWidgets.QMainWindow):
                                 self.stop_event.set()
                                 self._socket.close()
                                 self.close()  # Close the current window
-                            if data["rooms"]:
+                            if rooms:
                                 # The first room will always be the default, main
                                 # landing room
-                                self.current_room = data["rooms"][0]
-                                self.__set_up_rooms(data["rooms"])
+                                self.current_room = rooms[0]
+                                self.__set_up_rooms(rooms)
+                            if messages:
+                                fmt.update_msg_list(self, messages,
+                                                    cache=self._msg_cache)
+                                self.current_room.most_recent_message = messages[0]
+
+                                self._msg_cache.is_ready = True
 
                             fmt.update_user_list(self, data)
 
-                        fmt.update_msg_list(self, data)
+                        if rooms is None:
+                            fmt.update_msg_list(self, data, cache=self._msg_cache)
+
+                            if str(data["user"].uuid) != self.SRV_UUID:
+                                msg = fmt.do_friendly_conversion_to(Message, data)
+                                print(msg)
+
+                                self.update_recent_message(msg)
+                                print(f"{self.current_room.most_recent_message!r}")
 
     def create_anon_user(self):
         if self.login.buttonAnon.hasFocus() or self.login.inputNickname.hasFocus():
-            if len(self.login.inputNickname.text().strip()) > 0:
-                self.user = User(f"[ANON] {self.login.inputNickname.text()}")
-                print(self.user.uuid)
-                self.login.close()
-            elif len(self.login.inputNickname.text().strip()) == 0:
-                errdialog = CustomDialog(window_title="Error",
-                                         message="Please enter a nickname",
+            try:
+                fmt.is_valid_anon_username(
+                    self.login.inputNickname.text().strip())
+                if len(self.login.inputNickname.text().strip()) > 0:
+                    self.user = User(
+                        f"[ANON] {self.login.inputNickname.text().strip()}")
+                    print(self.user.uuid)
+                    self.login.close()
+
+                    return
+                elif len(self.login.inputNickname.text().strip()) == 0:
+                    errdialog = CustomDialog(window_title="Error",
+                                             message="Please enter a nickname",
+                                             font=self.default_font)
+                    errdialog.exec_()
+
+            except NameError as e:
+                errdialog = CustomDialog(window_title=f"{type(e)}",
+                                         message=f"{e}",
                                          font=self.default_font)
                 errdialog.exec_()
 
@@ -233,9 +330,12 @@ class Client(QtWidgets.QMainWindow):
         self.login = LoginDialog()
         self.login.buttonAnon.clicked.connect(self.create_anon_user)
         self.login.buttonLoginRegister.clicked.connect(self.inspect_button)
-        self.login.toggleExistingAcc.toggled.connect(self.login.display_username_input)
-        self.login.toggleExistingAcc.toggled.connect(self.login.toggle_register_button)
-        self.login.inputNickname.textEdited.connect(self.login.disable_account_inputs)
+        self.login.toggleExistingAcc.toggled.connect(
+            self.login.display_username_input)
+        self.login.toggleExistingAcc.toggled.connect(
+            self.login.toggle_register_button)
+        self.login.inputNickname.textEdited.connect(
+            self.login.disable_account_inputs)
 
         for i in {self.login.inputEmail,
                   self.login.inputPassword,
@@ -251,26 +351,26 @@ class Client(QtWidgets.QMainWindow):
 
             def _do_user_login(_client: Client):
                 if not _client._socket:
-                    _client._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _client._socket = socket.socket(socket.AF_INET,
+                                                    socket.SOCK_STREAM)
                     _client._socket.connect((_client.HOST, _client.PORT))
 
                 email_q = {
-                    "content": "Query",
+                    "content"       : "Query",
                     "system_message": True,
-                    "get": "user",
-                    "data": _client.email,
-                    "datatype": "email"
+                    "get"           : "user",
+                    "data"          : _client.email,
+                    "datatype"      : "email"
                 }
 
                 _client._send(_client._socket, email_q)
-                user_tuple = fmt.decode_bytes(_client._socket.recv(4096))
-                print(user_tuple)
-                if user_tuple is not None:
+                user = fmt.decode_bytes(_client._socket.recv(4096))
+
+                if user is not None:
                     pw = _client.login.inputPassword.text()
-                    print(pw)
-                    if _client.check_password(pw, user_tuple[1]):
-                        _client.user = User.from_existing_data(data=user_tuple)
-                        print(user_tuple)
+
+                    if _client.check_password(pw, str(user.uuid)):
+                        _client.user = user
                     else:
                         _client.email = None
                         _client.ERRS = "password"
@@ -301,15 +401,16 @@ class Client(QtWidgets.QMainWindow):
                 :return:
                 """
                 if not _client._socket:
-                    _client._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _client._socket = socket.socket(socket.AF_INET,
+                                                    socket.SOCK_STREAM)
                     _client._socket.connect((_client.HOST, _client.PORT))
 
                 existing_user_q = {
-                    "content": "Query",
+                    "content"       : "Query",
                     "system_message": True,
-                    "get": "user",
-                    "data": _client.email,
-                    "datatype": "email"
+                    "get"           : "user",
+                    "data"          : _client.email,
+                    "datatype"      : "email"
                 }
 
                 _client._send(_client._socket, existing_user_q)
@@ -322,15 +423,17 @@ class Client(QtWidgets.QMainWindow):
                     username = _client.login.inputUsername.text()
 
                     register_user_q = {
-                        "content": "Query",
+                        "content"       : "Query",
                         "system_message": True,
-                        "create": "user",
-                        "data": fmt.encode_str((_client.email, username, pw)),
-                        "datatype": "email, username, pw"
+                        "create"        : "user",
+                        "data"          : fmt.encode_str(
+                            (_client.email, username, pw)),
+                        "datatype"      : "email, username, pw"
                     }
 
                     _client._send(_client._socket, register_user_q)
-                    registered_user = fmt.decode_bytes(_client._socket.recv(4096))
+                    registered_user = fmt.decode_bytes(
+                        _client._socket.recv(4096))
 
                     if registered_user in {"email", "username"}:
                         _client.ERRS = registered_user
@@ -358,6 +461,15 @@ class Client(QtWidgets.QMainWindow):
                                          message="Account with that email not found",
                                          font=self.default_font)
         else:
+            try:
+                fmt.is_valid_username(self.login.inputUsername.text().strip())
+            except NameError as e:
+                errdialog = CustomDialog(window_title=f"{type(e)}",
+                                         message=f"{e}",
+                                         font=self.default_font)
+                errdialog.exec_()
+                return
+
             self.do_registration()
             if self.ERRS in {"email", "username"}:
                 errdialog = CustomDialog(window_title="Registration Failed",
@@ -370,6 +482,43 @@ class Client(QtWidgets.QMainWindow):
         if self.login_successful():
             self._socket.close()
             self.login.close()
+
+    def load_unload_messages(self, x):
+        if not self._msg_cache.is_ready:
+            return
+
+        if x <= 2:
+            for i in range(3):
+                top_msg = self.msgList.item(0)
+                if top_msg.uuid == self._msg_cache.obj_at("top", room=self.current_room).uuid:
+                    print(
+                        "ALL IS LOADED!\nrequest some more from the server, fool")
+                else:
+                    try:
+                        next_msg = self._msg_cache.next_obj(relative="above",
+                                                            target=str(top_msg.uuid),
+                                                            room=self.current_room)
+                        fmt.update_msg_list(self, dict(next_msg), cache=self._msg_cache, pos="top")
+                        self.msgList.verticalScrollBar().setSliderPosition(3)
+                    except Exception as e:
+                        print(e)
+
+        elif self.msgList.verticalScrollBar().sliderPosition() >= self.msgList.verticalScrollBar().maximum() - 2:
+            for i in range(3):
+                if self.current_room.most_recent_message.uuid == self.msgList.item(self.msgList.count()-1).uuid:
+                    print("ALL IS LOADED!\nrequest some more from the server, fool")
+                else:
+                    try:
+                        bottom_msg = self.msgList.item(self.msgList.count()-1)
+                        next_msg = self._msg_cache.next_obj(relative="below",
+                                                            target=str(bottom_msg.uuid),
+                                                            room=self.current_room)
+                        fmt.update_msg_list(self, dict(next_msg),
+                                            cache=self._msg_cache)
+                        self.msgList.verticalScrollBar().setSliderPosition(
+                            self.msgList.verticalScrollBar().maximum() - 3)
+                    except Exception as e:
+                        print(e)
 
     def login_successful(self) -> bool:
         """
@@ -413,7 +562,8 @@ class Client(QtWidgets.QMainWindow):
         self.msgListGroupBox.setTitle(_translate("self", "Messages"))
 
         self.msgList.setSortingEnabled(False)
-        self.sendMsgBox.setPlaceholderText(_translate("self", "Send a message..."))
+        self.sendMsgBox.setPlaceholderText(
+            _translate("self", "Send a message..."))
 
         self.menuView.setTitle(_translate("self", "&View"))
         self.menuHelp.setTitle(_translate("self", "&Help"))
@@ -433,17 +583,20 @@ class Client(QtWidgets.QMainWindow):
             self.editStatus.setText(_translate("self", "Change status"))
 
         # INFO: VIEW MENU
-        self.toggleExplicitLanguageFilter.setText(_translate("self", "Toggle Explicit Language Filter"))
-        self.toggleUserActionButtons.setText(_translate("self", "Toggle User Action Buttons"))
+        self.toggleExplicitLanguageFilter.setText(
+            _translate("self", "Toggle Explicit Language Filter"))
+        self.toggleUserActionButtons.setText(
+            _translate("self", "Toggle User Action Buttons"))
         self.toggleUserList.setText(_translate("self", "Toggle User List"))
+        self.toggleAlternateRowColours.setText(
+            _translate("self", "Toggle Alternating row colours"))
         self.toggleCoolMode.setText(_translate("self", "Cool mode"))
         self.editFontSize.setText(_translate("self", "Edit font size"))
         self.menuThemes.setTitle(_translate("self", "Themes..."))
 
         # INFO: THEME SUB-MENU
-        self.theme1.setText(_translate("self", "Theme 1"))
-        self.theme2.setText(_translate("self", "Theme 2"))
-        self.theme3.setText(_translate("self", "Theme 3"))
+        for theme in self.menuThemes.actions():
+            theme.setText(_translate("self", theme.objectName()))
         self.createTheme.setText(_translate("self", "Create theme..."))
 
         # INFO: HELP MENU
@@ -452,165 +605,25 @@ class Client(QtWidgets.QMainWindow):
         self.reportABug.setText(_translate("self", "Report a bug"))
         self.aboutChatroom.setText(_translate("self", "About Chatroom"))
 
-    def setup_themes(self, **config):
-        text_colour = config["text_colour"]
-        line_colour = config["line_colour"]
-
-        # INFO: Main client CSS
-        self.setStyleSheet("#self {\n"
-                           "    background-color:#A054ED;\n"
-                           "}\n"
-                           "\n"
-                           "QWidget {\n"
-                           "    outline: none;\n"
-                           "}\n"
-                           "\n"
-                           "QMenuBar {\n"
-                           "    background-color: rgb(56, 40, 80);\n"
-                           "    border-bottom: 1px solid white;\n"
-                           "    color: white;\n"
-                           "    font-family: \"Microsoft New Tai Lue\";\n"
-                           "}\n"
-                           "\n"
-                           "QMenu {\n"
-                           "    border: 1px solid white;\n"
-                           "    background-color: rgb(51, 35, 75);\n"
-                           "    color: white;\n"
-                           "    font-family: \"Microsoft New Tai Lue\";\n"
-                           "    selection-background-color: #000;\n"
-                           "    selection-color: #abe25f;\n"
-                           "}\n"
-                           "\n"
-                           "QScrollBar {\n"
-                           "    background: rgba(0, 0, 0, 0);\n"
-                           "    padding: 1px;\n"
-                           "    width: 9px;\n"
-                           "}\n"
-                           "\n"
-                           "QScrollBar::handle {\n"
-                           "    background: white;\n"
-                           "    border: 1px solid white;\n"
-                           "    border-radius: 3px;\n"
-                           "}\n"
-                           "\n"
-                           "QScrollBar::add-page, QScrollBar::sub-page {\n"
-                           "    background: rgba(0, 0, 0, 0);\n"
-                           "}\n"
-                           "\n"
-                           "QScrollBar::sub-line, QScrollBar::add-line {\n"
-                           "    height: 0;\n"
-                           "}")
-
-        # INFO: Menubar CSS
-        self.menubar.setStyleSheet("QMenuBar::item:selected {\n"
-                                   "    background-color: #000;\n"
-                                   "    color: #abe25f;\n"
-                                   "}\n")
-
-        # INFO: Buttons, containers CSS
-        self.centralwidget.setStyleSheet("QPushButton, QPlainTextEdit {\n"
-                                         "    background-color: rgb(56, 40, 80);\n"
-                                         "    color: white;\n"
-                                         "    font-weight: bold;\n"
-                                         "}\n"
-                                         "\n"
-                                         "QGroupBox {\n"
-                                         "    color: white;\n"
-                                         "    font-weight: bold;\n"
-                                         "}\n"
-                                         "\n"
-                                         "QLineEdit {\n"
-                                         "    border: 1px solid white;\n"
-                                         "    border-radius: 4px;\n"
-                                         "}\n"
-                                         "\n"
-                                         "QWidget {\n"
-                                         "    font-family: \"Microsoft New Tai Lue\";\n"
-                                         "}")
-
-        # INFO: Message send CSS
-        self.sendMsgBox.setStyleSheet("QFrame {\n"
-                                      "    border: 1px solid white;\n"
-                                      "    border-radius: 6px;\n"
-                                      "}")
-
-        # INFO: Message container scrollbar CSS
-        self.msgList.setStyleSheet("QListView {\n"
-                                   "    background-color: rgb(56, 40, 80);\n"
-                                   "    color: white;\n"
-                                   "    alternate-background-color: white;\n"
-                                   "}\n"
-                                   "QListView::item {\n"
-                                   "    border: none;\n"
-                                   "}\n"
-                                   "QFrame {\n"
-                                   "    border: 1px solid white;\n"
-                                   "    border-radius: 6px;\n"
-                                   "    outline: none;\n"
-                                   "}\n"
-                                   "\n"
-                                   "QScrollBar {\n"
-                                   "    background-color: black;\n"
-                                   "}")
-
-        # INFO: Dotted-border removal CSS
-        self.msgListGroupBox.setStyleSheet("QWidget {\n"
-                                           "    outline: none;\n"
-                                           "}")
-
-        # INFO: Room selection CSS
-        self.chatroomComboBox.setStyleSheet("QComboBox {\n"
-                                            "    background-color: rgb(56, 40, 80);\n"
-                                            "    selection-background-color: rgb(56, 40, 80);\n"
-                                            "    color: white;\n"
-                                            "}\n"
-                                            "\n"
-                                            "QListView {\n"
-                                            "    background-color: rgb(56, 40, 80);\n"
-                                            "    color: white;\n"
-                                            "    selection-background-color: #000;\n"
-                                            "    selection-color: #abe25f;\n"
-                                            "    outline: none;\n"
-                                            "}")
-
-        # INFO: User list and item CSS
-        self.userList.setStyleSheet("QListView {\n"
-                                    "    background-color: rgb(56, 40, 80);\n"
-                                    "    color: white;\n"
-                                    "    selection-color: white;\n"
-                                    "}\n"
-                                    "QListView::item {\n"
-                                    "    border: none;\n"
-                                    "}\n"
-                                    "#userList::item:hover {\n"
-                                    "    border: 1px solid rgb(56, 40, 80);\n"
-                                    "    border-radius: 5px;\n"
-                                    "    background-color: #A054ED;\n"
-                                    "}\n"
-                                    "#userList::item:selected {\n"
-                                    "    border: 1px solid rgb(56, 40, 80);\n"
-                                    "    border-radius:5px;\n"
-                                    "    background-color: #000;\n"
-                                    "}\n"
-                                    "")
-
     def setup_ui(self):
-        from clientside.actionslots import HelpSlots, ViewSlots
+        from clientside.actionslots import HelpSlots, FriendsSlots, ViewSlots
 
         self.setObjectName("self")
         self.resize(578, 363)
 
-        #sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        #sizePolicy.setHorizontalStretch(0)
-        #sizePolicy.setVerticalStretch(0)
-        #sizePolicy.setHeightForWidth(self.sizePolicy().hasHeightForWidth())
-        #self.setSizePolicy(sizePolicy)
+        # sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        # sizePolicy.setHorizontalStretch(0)
+        # sizePolicy.setVerticalStretch(0)
+        # sizePolicy.setHeightForWidth(self.sizePolicy().hasHeightForWidth())
+        # self.setSizePolicy(sizePolicy)
 
         self.centralwidget = QtWidgets.QWidget(self)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum,
+                                           QtWidgets.QSizePolicy.Minimum)
         sizePolicy.setHorizontalStretch(1)
         sizePolicy.setVerticalStretch(1)
-        sizePolicy.setHeightForWidth(self.centralwidget.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.centralwidget.sizePolicy().hasHeightForWidth())
 
         self.centralwidget.setSizePolicy(sizePolicy)
         self.centralwidget.setSizeIncrement(QtCore.QSize(1, 1))
@@ -621,10 +634,12 @@ class Client(QtWidgets.QMainWindow):
         self.gridLayout.setObjectName("gridLayout")
         self.usersGroupBox = QtWidgets.QGroupBox(self.centralwidget)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed,
+                                           QtWidgets.QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.usersGroupBox.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.usersGroupBox.sizePolicy().hasHeightForWidth())
 
         self.usersGroupBox.setSizePolicy(sizePolicy)
         self.usersGroupBox.setAlignment(QtCore.Qt.AlignCenter)
@@ -638,10 +653,12 @@ class Client(QtWidgets.QMainWindow):
         self.usersGridLayout.setObjectName("usersGridLayout")
         self.muteButton = QtWidgets.QPushButton(self.usersGroupBox)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred,
+                                           QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.muteButton.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.muteButton.sizePolicy().hasHeightForWidth())
 
         self.muteButton.setSizePolicy(sizePolicy)
         self.muteButton.setCheckable(True)
@@ -649,10 +666,12 @@ class Client(QtWidgets.QMainWindow):
         self.usersGridLayout.addWidget(self.muteButton, 1, 1, 1, 1)
         self.friendButton = QtWidgets.QPushButton(self.usersGroupBox)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred,
+                                           QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.friendButton.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.friendButton.sizePolicy().hasHeightForWidth())
 
         self.friendButton.setSizePolicy(sizePolicy)
         self.friendButton.setCheckable(False)
@@ -662,10 +681,12 @@ class Client(QtWidgets.QMainWindow):
         self.usersGridLayout.addWidget(self.friendButton, 1, 0, 1, 1)
 
         self.userList = ListWidget(self.usersGroupBox)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum,
+                                           QtWidgets.QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.userList.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.userList.sizePolicy().hasHeightForWidth())
         self.userList.setSizePolicy(sizePolicy)
         self.userList.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
 
@@ -677,12 +698,14 @@ class Client(QtWidgets.QMainWindow):
         self.gridLayout.addWidget(self.usersGroupBox, 0, 1, 1, 1)
         self.chatroomGroupBox = QtWidgets.QGroupBox(self.centralwidget)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-        sizePolicy.setHorizontalStretch(1)
-        sizePolicy.setVerticalStretch(1)
-        sizePolicy.setHeightForWidth(self.chatroomGroupBox.sizePolicy().hasHeightForWidth())
+        self.chatroomSizePolicy = QtWidgets.QSizePolicy(
+            QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        self.chatroomSizePolicy.setHorizontalStretch(1)
+        self.chatroomSizePolicy.setVerticalStretch(1)
+        self.chatroomSizePolicy.setHeightForWidth(
+            self.chatroomGroupBox.sizePolicy().hasHeightForWidth())
 
-        self.chatroomGroupBox.setSizePolicy(sizePolicy)
+        self.chatroomGroupBox.setSizePolicy(self.chatroomSizePolicy)
         self.chatroomGroupBox.setSizeIncrement(QtCore.QSize(1, 1))
         self.chatroomGroupBox.setAlignment(QtCore.Qt.AlignCenter)
         self.chatroomGroupBox.setObjectName("chatroomGroupBox")
@@ -702,10 +725,12 @@ class Client(QtWidgets.QMainWindow):
         self.gridLayout.addWidget(self.chatroomGroupBox, 1, 1, 1, 1)
         self.msgListGroupBox = QtWidgets.QGroupBox(self.centralwidget)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Preferred)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum,
+                                           QtWidgets.QSizePolicy.Preferred)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.msgListGroupBox.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.msgListGroupBox.sizePolicy().hasHeightForWidth())
 
         self.msgListGroupBox.setSizePolicy(sizePolicy)
         self.msgListGroupBox.setAlignment(QtCore.Qt.AlignCenter)
@@ -717,18 +742,20 @@ class Client(QtWidgets.QMainWindow):
         self.msgList.setWrapping(True)
         self.msgList.setWordWrap(True)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum,
+                                           QtWidgets.QSizePolicy.Minimum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.msgList.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.msgList.sizePolicy().hasHeightForWidth())
 
         self.msgList.setSizePolicy(sizePolicy)
         self.msgList.setAutoFillBackground(False)
 
         self.msgList.setLineWidth(0)
         self.msgList.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self.msgList.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.msgList.setAlternatingRowColors(False)
+        self.msgList.setEditTriggers(
+            QtWidgets.QAbstractItemView.NoEditTriggers)
         self.msgList.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.msgList.setMovement(QtWidgets.QListView.Static)
         self.msgList.setProperty("isWrapping", False)
@@ -738,7 +765,8 @@ class Client(QtWidgets.QMainWindow):
 
         # INFO: EVENT TRIGGERS FOR MESSAGES
         self.msgList.model().rowsInserted.connect(self.msgList.scrollToBottom)
-        self.msgList.verticalScrollBar().valueChanged.connect(lambda x=self: print(x))
+        self.msgList.verticalScrollBar().valueChanged.connect(
+            lambda x=self: self.load_unload_messages(x))
 
         # TODO: ADDING MESSAGES TO THE LIST \/
         item = QtWidgets.QListWidgetItem()
@@ -752,10 +780,12 @@ class Client(QtWidgets.QMainWindow):
         self.sendMsgBox = MessageBox(self, self.msgListGroupBox)
         self.sendMsgBox.setEnabled(True)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                           QtWidgets.QSizePolicy.Maximum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.sendMsgBox.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.sendMsgBox.sizePolicy().hasHeightForWidth())
 
         self.sendMsgBox.setSizePolicy(sizePolicy)
         self.sendMsgBox.setMaximumSize(QtCore.QSize(16777215, 50))
@@ -763,7 +793,8 @@ class Client(QtWidgets.QMainWindow):
         self.sendMsgBox.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.sendMsgBox.setFrameShadow(QtWidgets.QFrame.Plain)
         self.sendMsgBox.setLineWidth(0)
-        self.sendMsgBox.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.sendMsgBox.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarAlwaysOff)
         self.sendMsgBox.setTabChangesFocus(True)
         self.sendMsgBox.setDocumentTitle("")
         self.sendMsgBox.setBackgroundVisible(True)
@@ -794,30 +825,28 @@ class Client(QtWidgets.QMainWindow):
         self.menuHelp = QtWidgets.QMenu(self.menubar)
         self.menuHelp.setObjectName("menuHelp")
         self.setMenuBar(self.menubar)
-        self.theme1 = QtWidgets.QAction(self)
-        self.theme1.setObjectName("theme1")
-        self.theme2 = QtWidgets.QAction(self)
-
-        font = QtGui.QFont()
-        font.setFamily("Microsoft New Tai Lue")
-
-        self.theme2.setFont(font)
-        self.theme2.setObjectName("theme2")
-        self.theme3 = QtWidgets.QAction(self)
-        self.theme3.setObjectName("theme3")
 
         self.toggleUserList = QtWidgets.QAction(self)
         self.toggleUserList.setCheckable(True)
         self.toggleUserList.setObjectName("toggleUserList")
+        self.toggleUserList.triggered.connect(
+            lambda x: ViewSlots.toggle_user_list(self))
 
         self.toggleUserActionButtons = QtWidgets.QAction(self)
         self.toggleUserActionButtons.setCheckable(True)
         self.toggleUserActionButtons.setObjectName("toggleUserActionButtons")
-        self.toggleUserActionButtons.triggered.connect(self._toggle_user_buttons)
+        self.toggleUserActionButtons.triggered.connect(
+            lambda x: ViewSlots.toggle_user_action_buttons(self))
+
+        self.toggleAlternateRowColours = QtWidgets.QAction(self)
+        self.toggleAlternateRowColours.setCheckable(True)
+        self.toggleAlternateRowColours.triggered.connect(
+            lambda x: ViewSlots.toggle_alternate_row_colours(self))
 
         self.toggleCoolMode = QtWidgets.QAction(self)
         self.toggleCoolMode.setCheckable(True)
-        self.toggleCoolMode.triggered.connect(lambda x=self: ViewSlots.change_fonts(self))
+        self.toggleCoolMode.triggered.connect(
+            lambda x: ViewSlots.change_fonts(self))
 
         font = QtGui.QFont()
         font.setFamily("Comic Sans MS")
@@ -827,6 +856,8 @@ class Client(QtWidgets.QMainWindow):
 
         self.createTheme = QtWidgets.QAction(self)
         self.createTheme.setObjectName("createTheme")
+        self.createTheme.triggered.connect(
+            lambda x: ViewSlots.create_theme(self))
 
         self.addFriend = QtWidgets.QAction(self)
         self.addFriend.setObjectName("addFriend")
@@ -845,6 +876,8 @@ class Client(QtWidgets.QMainWindow):
 
         self.viewFriends = QtWidgets.QAction(self)
         self.viewFriends.setObjectName("viewFriends")
+        self.viewFriends.triggered.connect(
+            lambda: FriendsSlots.view_friends(self))
 
         self.editFontSize = QtWidgets.QAction(self)
         self.editFontSize.setObjectName("editFontSize")
@@ -862,18 +895,25 @@ class Client(QtWidgets.QMainWindow):
 
         self.toggleExplicitLanguageFilter = QtWidgets.QAction(self)
         self.toggleExplicitLanguageFilter.setCheckable(True)
-        self.toggleExplicitLanguageFilter.setObjectName("toggleExplicitLanguageFilter")
+        self.toggleExplicitLanguageFilter.setObjectName(
+            "toggleExplicitLanguageFilter")
 
         self.aboutChatroom = QtWidgets.QAction(self)
         self.aboutChatroom.setObjectName("aboutChatroom")
-        self.aboutChatroom.triggered.connect(lambda x=self: HelpSlots.about_chatroom(self))
+        self.aboutChatroom.triggered.connect(
+            lambda x=self: HelpSlots.about_chatroom(self))
 
-        self.menuThemes.addAction(self.theme1)
-        self.menuThemes.addAction(self.theme2)
-        self.menuThemes.addAction(self.theme3)
+        for theme in config.get_theme_names():
+            action = ThemeAction(self)
+            action.setObjectName(theme[6:])
+            action.setText(theme[6:])
+            action.setup_trigger()
+            self.menuThemes.addAction(action)
+
         self.menuThemes.addSeparator()
         self.menuThemes.addAction(self.createTheme)
 
+        self.menuView.addAction(self.toggleAlternateRowColours)
         self.menuView.addAction(self.toggleExplicitLanguageFilter)
         self.menuView.addAction(self.toggleUserActionButtons)
         self.menuView.addAction(self.toggleUserList)
@@ -911,7 +951,7 @@ class Client(QtWidgets.QMainWindow):
         self.setTabOrder(self.muteButton, self.chatroomComboBox)
         self.setTabOrder(self.chatroomComboBox, self.pushButton)
 
-        self.setup_themes()
+        style.to_current_theme(self)
 
     def send_message(self, content):
         msg = Message(content=content, user=self.user, system_message=False)
@@ -925,12 +965,12 @@ class Client(QtWidgets.QMainWindow):
         """
         ret_code = 1
 
-        if update.is_update_available(True):
+        if self.check_for_updates and update.is_update_available(True):
             from utils.update import start_download
 
             start_download()
 
-        if not update.is_update_available():
+        if not self.check_for_updates or not update.is_update_available():
             ret_code = self.do_account_setup()
 
         if self.login_successful():
@@ -949,6 +989,27 @@ class Client(QtWidgets.QMainWindow):
             # Handles the user closing the login dialog
             sys.exit(ret_code)
 
+    def update_recent_message(self, message: Message):
+        """
+        Get the room that the message belongs to,
+        updating its most recent message, so then
+        the client knows where to stop scrolling
+        when switching rooms.
+
+        :param message:
+        :return:
+        """
+        print("mhm")
+        print(self.current_room.most_recent_message)
+
+        try:
+            for r in self.user.rooms:
+                if r.uuid == message.room.uuid:
+                    r.most_recent_message = message
+        except Exception as e:
+            print(e)
+        print("nice")
+
 
 class LoginDialog(QtWidgets.QDialog):
     """
@@ -963,15 +1024,18 @@ class LoginDialog(QtWidgets.QDialog):
     def __init__(self):
         super().__init__()
         self.setup_ui()
+        style.to_current_theme(self)
 
     def disable_account_inputs(self):
-        if len(self.inputNickname.text()) > 0 and self.inputUsername.isEnabled():
+        if len(
+                self.inputNickname.text()) > 0 and self.inputUsername.isEnabled():
             self.inputUsername.setEnabled(False)
             self.inputPassword.setEnabled(False)
             self.inputEmail.setEnabled(False)
             self.buttonLoginRegister.setEnabled(False)
 
-        elif len(self.inputNickname.text()) == 0 and not self.inputUsername.isEnabled():
+        elif len(
+                self.inputNickname.text()) == 0 and not self.inputUsername.isEnabled():
             self.inputUsername.setEnabled(True)
             self.inputPassword.setEnabled(True)
             self.inputEmail.setEnabled(True)
@@ -1016,24 +1080,30 @@ class LoginDialog(QtWidgets.QDialog):
         self.gridLayout.setObjectName("gridLayout")
         self.buttonAnon = QtWidgets.QPushButton(self)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Maximum,
+                                           QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.buttonAnon.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.buttonAnon.sizePolicy().hasHeightForWidth())
 
         self.buttonAnon.setSizePolicy(sizePolicy)
         self.buttonAnon.setObjectName("buttonAnon")
         self.gridLayout.addWidget(self.buttonAnon, 6, 1, 1, 1)
-        spacerItem = QtWidgets.QSpacerItem(20, 19, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Preferred)
+        spacerItem = QtWidgets.QSpacerItem(20, 19,
+                                           QtWidgets.QSizePolicy.Minimum,
+                                           QtWidgets.QSizePolicy.Preferred)
         self.gridLayout.addItem(spacerItem, 5, 0, 1, 1)
 
         self.inputNickname = QtWidgets.QLineEdit(self)
         self.inputNickname.setEnabled(True)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum,
+                                           QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.inputNickname.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.inputNickname.sizePolicy().hasHeightForWidth())
 
         self.inputNickname.setSizePolicy(sizePolicy)
         self.inputNickname.setText("")
@@ -1047,10 +1117,12 @@ class LoginDialog(QtWidgets.QDialog):
         self.gridLayout.addWidget(self.labelContAnon, 2, 0, 1, 2)
         self.buttonLoginRegister = QtWidgets.QPushButton(self)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                           QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.buttonLoginRegister.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.buttonLoginRegister.sizePolicy().hasHeightForWidth())
 
         self.buttonLoginRegister.setSizePolicy(sizePolicy)
         self.buttonLoginRegister.setObjectName("buttonLoginRegister")
@@ -1067,10 +1139,12 @@ class LoginDialog(QtWidgets.QDialog):
         self.gridLayout.addWidget(self.inputUsername, 5, 4, 1, 2)
         self.inputPassword = QtWidgets.QLineEdit(self)
 
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum,
+                                           QtWidgets.QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
-        sizePolicy.setHeightForWidth(self.inputPassword.sizePolicy().hasHeightForWidth())
+        sizePolicy.setHeightForWidth(
+            self.inputPassword.sizePolicy().hasHeightForWidth())
 
         self.inputPassword.setSizePolicy(sizePolicy)
         self.inputPassword.setFrame(True)
@@ -1078,9 +1152,13 @@ class LoginDialog(QtWidgets.QDialog):
         self.inputPassword.setObjectName("inputPassword")
 
         self.gridLayout.addWidget(self.inputPassword, 7, 4, 1, 1)
-        spacerItem1 = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+        spacerItem1 = QtWidgets.QSpacerItem(20, 40,
+                                            QtWidgets.QSizePolicy.Minimum,
+                                            QtWidgets.QSizePolicy.Expanding)
         self.gridLayout.addItem(spacerItem1, 8, 0, 1, 1)
-        spacerItem2 = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Preferred)
+        spacerItem2 = QtWidgets.QSpacerItem(20, 40,
+                                            QtWidgets.QSizePolicy.Minimum,
+                                            QtWidgets.QSizePolicy.Preferred)
         self.gridLayout.addItem(spacerItem2, 0, 1, 1, 1)
         self.verticalDivider = QtWidgets.QFrame(self)
         self.verticalDivider.setFrameShape(QtWidgets.QFrame.VLine)
@@ -1107,14 +1185,17 @@ class LoginDialog(QtWidgets.QDialog):
         self.buttonLoginRegister.setText(_translate("self", "Register"))
         self.inputUsername.setPlaceholderText(_translate("self", "Username"))
         self.inputPassword.setPlaceholderText(_translate("self", "Password"))
-        self.toggleExistingAcc.setText(_translate("self", "Already got an account?            "))
+        self.toggleExistingAcc.setText(
+            _translate("self", "Already got an account?            "))
 
         self.inputNickname.setTabOrder(self.inputNickname, self.buttonAnon)
         self.buttonAnon.setTabOrder(self.buttonAnon, self.toggleExistingAcc)
-        self.toggleExistingAcc.setTabOrder(self.toggleExistingAcc, self.inputUsername)
+        self.toggleExistingAcc.setTabOrder(self.toggleExistingAcc,
+                                           self.inputUsername)
         self.inputUsername.setTabOrder(self.inputUsername, self.inputEmail)
         self.inputEmail.setTabOrder(self.inputEmail, self.inputPassword)
-        self.inputPassword.setTabOrder(self.inputPassword, self.buttonLoginRegister)
+        self.inputPassword.setTabOrder(self.inputPassword,
+                                       self.buttonLoginRegister)
 
     def toggle_register_button(self):
         if self.buttonLoginRegister.text() == "Log in":
@@ -1159,7 +1240,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
                       fetching the pressed key.
         :return: None
         """
-        if len(self.toPlainText()) >= self.CHAR_LIMIT and event.key().real < 2**24:
+        if len(self.toPlainText()) >= self.CHAR_LIMIT and event.key().real < 2 ** 24:
             self.setPlainText(self.toPlainText()[:self.CHAR_LIMIT])
 
             return
@@ -1186,9 +1267,13 @@ class MessageBox(QtWidgets.QPlainTextEdit):
 
 class ListWidget(QtWidgets.QListWidget):
 
-    def __init__(self, parent: QtWidgets.QWidget, *, cache=None, max_items=128):
+    def __init__(self, parent: QtWidgets.QWidget, *, cache=None,
+                 max_items=128):
         super().__init__(parent)
         self.cache = cache
+
+    def item(self, row: int) -> MessageWidgetItem:
+        return super().item(row)
 
     def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
         for item in self.selectedItems():
@@ -1210,6 +1295,7 @@ class ListWidget(QtWidgets.QListWidget):
 
 if __name__ == "__main__":
     import sys
+
     app = QtWidgets.QApplication(sys.argv)
 
     icon = QtGui.QIcon("../assets/window_icon.png")
@@ -1221,8 +1307,8 @@ if __name__ == "__main__":
 
         # Allow for a clean exit
         sys.exit(app.exec_())
-    except Exception as e:
-        print(e)
+    except Exception as ex:
+        print(ex)
         if client._socket:
             client._socket.close()
     finally:
