@@ -7,14 +7,17 @@ from typing import Union
 
 from PyQt5 import QtCore, QtWidgets
 
-from user import User
 from serverside import query
+from serverside.enotify import Emailer
+from user import User
 from utils import fmt
-from utils.fmt import update_msg_list
 from utils.cache import Cache
+from utils.fmt import update_msg_list
 
 PORT = 65501
 HOST = socket.gethostbyname(socket.gethostname())
+
+NULL_BYTE = "\x00"
 
 
 msg_cache = Cache(max_size=2**15)
@@ -31,6 +34,7 @@ user_query.msg_query, user_query.room_query = msg_query, room_query
 
 
 class Server(QtWidgets.QMainWindow):
+
     SCKT_TYPE = Union[int, "HasFileno"]
 
     def __init__(self, host: str, port: int):
@@ -39,6 +43,7 @@ class Server(QtWidgets.QMainWindow):
         self.conn = (host, port)
         self.clients = []
         self.host = host
+        self.mailer: Emailer = Emailer()
         self.port = port
         self.sel = selectors.DefaultSelector()
         self.user = User("Server")
@@ -137,7 +142,6 @@ class Server(QtWidgets.QMainWindow):
                 sock.close()
                 self.clients.remove(client)
 
-
                 if client['user'] is not None:
                     client['user'].status = 0
                     user_query.update_user_status(client['user'])
@@ -151,6 +155,7 @@ class Server(QtWidgets.QMainWindow):
                     msg_query.add_message(msg)
 
                     if client['user'].is_anonymous():
+                        client['user'].nickname = "$DELETED_USER"
                         user_query.delete_user(client["user"])
 
             if recv_bytes:
@@ -185,7 +190,9 @@ class Server(QtWidgets.QMainWindow):
                             self.userList.item(x).text() for x in range(self.userList.count())
                         ]
 
+                        recv_content["SRV"] = self.user
                         recv_content["rooms"] = user_query.fetch_all_rooms_for(sender)
+                        recv_content["messages"] = msg_query.fetch_recent_messages()
                 else:
                     msg_query.add_message(recv_content)
 
@@ -200,18 +207,18 @@ class Server(QtWidgets.QMainWindow):
                     to_send = data.outb
                 sent = self.send_message(to_send)
                 print(f"ECHO: {to_send} to {data.addr}")
+                print(msg_cache.obj_at("top", room=to_send["room"]).timestamp)
                 update_msg_list(self, to_send)
                 try:
                     data.outb = data.outb[sent:]  # Remove bytes from send buffer
                 except:
                     print("oh no")
 
-    @staticmethod
-    def handle_query(recv_content: dict, sock: socket.socket):
+    def handle_query(self, recv_content: dict, sock: socket.socket):
         if "get" in recv_content.keys():
             if recv_content["get"] == "user":
-                user_tuple = user_query.fetch_user_data_by(recv_content["datatype"],
-                                                           recv_content["data"])
+                user_tuple = user_query.fetch_user_by(recv_content["datatype"],
+                                                      recv_content["data"])
                 sock.sendall(fmt.encode_str(user_tuple))
             elif recv_content["get"] == "password":
                 pw_hash_tuple = user_query.fetch_pw_hash_by(recv_content["datatype"],
@@ -240,9 +247,12 @@ class Server(QtWidgets.QMainWindow):
                     pw = recv_content["data"][2]
                     new_user = User(nickname=username,
                                     registered_user=True)
-                    new_user.set_email(email)
+                    new_user.email = email
                     user_query.add_user(new_user, password=pw)
+
                     sock.sendall(fmt.encode_str(new_user))
+
+                    self.mailer.send_welcome_email_to(new_user)
 
     def kick(self):
         current_user = self.userList.currentItem()
@@ -290,14 +300,16 @@ class Server(QtWidgets.QMainWindow):
             msg = fmt.content(message_content=msg,
                               system_message=True,
                               user=self.user)
-        print(msg["user"])
         if client:
+            client["conn"].send((str(len(fmt.encode_str(msg))) + NULL_BYTE).encode("utf-8"))
             sent = client["conn"].send(fmt.encode_str(msg))
         elif not client:
             for c in self.clients:
+                c["conn"].send((str(len(fmt.encode_str(msg))) + NULL_BYTE).encode("utf-8"))
                 sent = c["conn"].send(fmt.encode_str(msg))
         else:
             print(msg, type(msg))
+
         return sent
 
     def setup_ui(self):
