@@ -1,5 +1,9 @@
 from PyQt5 import QtWidgets, QtCore
 
+from ui.themes import ThemeUpdater
+
+style = ThemeUpdater()
+
 # TODO: Auto-update ZIP
 CHUNK_SIZE = 2 ** 20
 
@@ -17,16 +21,17 @@ except ImportError:
 
 def is_update_available(show_window: bool = False) -> bool:
     """
-    Will return True if any updates are found.
-
     Using the queried version from the website, this checks
     whether the current client's version is up-to-date. If
-    it isn't, it will [PERFORM UPDATE].
-    :return:
+    it isn't, it will download an updater if none is
+    found, then execute it.
+
+    :return: A boolean indicating whether an update has been found.
     """
 
     if show_window:
         check = ProgressWindow()
+        style.to_current_theme(check)
         check.show()
         check.check_for_updates()
 
@@ -45,12 +50,12 @@ def get_live_version() -> str:
     :return:
     """
     import json  # For converting the requested string into JSON
-    import urllib.request, urllib.error  # Querying for the current live version
+    from urllib import request, error  # Querying for the current live version
 
     # TODO: Try/except catch any status errors
     try:
-        live_version = json.loads(urllib.request.urlopen("https://diggydev.co.uk/chatroom/version.json").read())["live_bin"]
-    except urllib.error.URLError as e:
+        live_version = json.loads(request.urlopen("https://diggydev.co.uk/chatroom/version.json").read())["live_bin"]
+    except error.URLError as e:
         print("BEEP BOOP SOMETHING GONE WRONG")
 
     return live_version
@@ -69,7 +74,7 @@ def start_download():
 class ProgressWindow(QtWidgets.QDialog):
 
     def __init__(self):
-        super(ProgressWindow, self).__init__()
+        super().__init__()
         self.setup_ui()
 
     def check_for_updates(self):
@@ -143,51 +148,8 @@ class ProgressWindow(QtWidgets.QDialog):
         self.setMinimumSize(QtCore.QSize(289, 225))
         self.setMaximumSize(QtCore.QSize(289, 225))
 
-        self.setStyleSheet(u"#self {\n"
-"	background-color:#A054ED;\n"
-"}\n"
-"\n"
-"QWidget {\n"
-"	outline: none;\n"
-"}\n"
-"\n"
-"QMenuBar {\n"
-"	background-color: rgb(56, 40, 80);\n"
-"	border-bottom: 1px solid white;\n"
-"	color: white;\n"
-"	font-family: \"Microsoft New Tai Lue\";\n"
-"}\n"
-"\n"
-"QMenu {\n"
-"	border: 1px solid white;\n"
-"	background-color: rgb(51, 35, 75);\n"
-"	color: white;\n"
-"	font-family: \"Microsoft New Tai Lue\";\n"
-"	selection-background-color: #000;\n"
-"	selection-color: #abe25f;\n"
-"}\n"
-"\n"
-"QScrollBar {\n"
-"	background: rgba(0, 0, 0, 0);\n"
-"	padding: 1px;\n"
-"	width: 9px;\n"
-"}\n"
-"\n"
-"QScrollBar::handle {\n"
-"	background: white;\n"
-"	border: 1px solid white;\n"
-"	border-radius: 3px;\n"
-"}\n"
-"\n"
-"QScrollBar::add-page, QScrollBar::sub-page {\n"
-"	background: rgba(0, 0, 0, 0);\n"
-"}\n"
-"\n"
-"QScrollBar::sub-line, QScrollBar::add-line {\n"
-"	height: 0;\n"
-"}")
         self.gridLayout = QtWidgets.QGridLayout(self)
-        self.gridLayout.setObjectName(u"gridLayout")
+        self.gridLayout.setObjectName("gridLayout")
         self.spacerBottom = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
 
         self.gridLayout.addItem(self.spacerBottom, 7, 0, 1, 1)
@@ -201,7 +163,7 @@ class ProgressWindow(QtWidgets.QDialog):
         self.gridLayout.addItem(self.spacerMid, 3, 0, 1, 1)
 
         self.progressBar = QtWidgets.QProgressBar(self)
-        self.progressBar.setObjectName(u"progressBar")
+        self.progressBar.setObjectName("progressBar")
 
         self.gridLayout.addWidget(self.progressBar, 4, 0, 1, 1)
 
@@ -210,7 +172,7 @@ class ProgressWindow(QtWidgets.QDialog):
         self.gridLayout.addItem(self.spacerTop, 0, 0, 1, 1)
 
         self.labelCurrentTask = QtWidgets.QLabel(self)
-        self.labelCurrentTask.setObjectName(u"labelCurrentTask")
+        self.labelCurrentTask.setObjectName("labelCurrentTask")
         self.labelCurrentTask.setAlignment(QtCore.Qt.AlignCenter)
 
         self.gridLayout.addWidget(self.labelCurrentTask, 2, 0, 1, 1)
@@ -228,6 +190,6 @@ class ProgressWindow(QtWidgets.QDialog):
 
         QtCore.QMetaObject.connectSlotsByName(self)
 
-    def retranslateUi(self, Updater):
-        Updater.setWindowTitle(QtCore.QCoreApplication.translate("self", u"Chatroom Auto-updater", None))
+    def retranslateUi(self, updater):
+        updater.setWindowTitle(QtCore.QCoreApplication.translate("self", u"Chatroom Auto-updater", None))
         self.labelCurrentTask.setText(QtCore.QCoreApplication.translate("self", u"Downloading...", None))
