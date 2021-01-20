@@ -2,12 +2,14 @@ import hashlib
 import pickle
 import re
 from datetime import datetime
-from typing import Union
+from typing import Iterable, Type, Union
 
 from PyQt5 import QtWidgets
 
-from user import User
 from message import Message
+from user import User
+from .cache import Cache
+from ui.items import MessageWidgetItem
 
 
 def _get_explicit_words() -> str:
@@ -43,6 +45,13 @@ def decode_bytes(bytes_to_decode: bytes) -> Union[str, dict, tuple, User, Messag
     return pickle.loads(bytes_to_decode)
 
 
+def do_friendly_conversion_to(cls: Union[Type[Message], Type[User]], data):
+    valid_keys = {k.strip("_") for k in {*cls.class_args()}}.intersection(data.keys())
+    valid_data = {k: v for k, v in data.items() if k in valid_keys}
+
+    return Message(**valid_data)
+
+
 def encode_str(obj_to_encode: Union[str, dict, tuple, User, Message]) -> bytes:
     return pickle.dumps(obj_to_encode)
 
@@ -69,9 +78,14 @@ def hash_pw(password: str, uuid: str) -> str:
 
 
 # noinspection PyTypeHints,PyTypeChecker
-def update_msg_list(widget: QtWidgets.QMainWindow, received: dict, *, cache=None):
-    if "user" in received.keys():
-        item = QtWidgets.QListWidgetItem()
+def update_msg_list(widget: QtWidgets.QMainWindow, received: Union[dict, Iterable[Message]], *, cache: Cache = None,
+                    pos=None):
+    if isinstance(received, dict):
+        print(received)
+        try:
+            item = MessageWidgetItem(uuid=received["message_uuid"])
+        except KeyError as e:
+            item = QtWidgets.QListWidgetItem()
 
         if hasattr(widget, "current_font"):
             item.setFont(widget.current_font)
@@ -85,15 +99,16 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: dict, *, cache=None
         # Display `You` for messages you, the user, have sent
         # as to distinguish messages in an easier fashion
         if hasattr(widget, "user"):
-            if received["user"].uuid == widget.user.uuid:
+            if widget.user.uuid == received["user"].uuid:
                 sender = "You"
-
-        current_time = datetime.now()
+            if str(received["user"]) == "$DELETED_USER":
+                sender = "Deleted user"
 
         if received['system_message']:
-            if received['content'] == "Initial connection.":
+            print(received['content'])
+            if message_content == "Initial connection.":
                 item.setText(f"{sender} joined.")
-            elif received['content'] == "Leaving":
+            elif message_content == "User left.":
                 item.setText(f"{sender} left.")
             else:
                 item.setText(received["content"])
@@ -102,12 +117,59 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: dict, *, cache=None
                 message_content = filter_content(message_content)
             item.setText(f"{sender}: {message_content}")
 
-        item.setToolTip(fr"""Timestamp: {current_time.strftime("%Y/%m/%d - %H:%M:%S")}""")
+        time = datetime.now().strftime("%Y/%m/%d - %H:%M:%S")
+        if "created_at" in received.keys():
+            time = received["created_at"]
+
+            if isinstance(time, datetime):
+                time = time.strftime("%Y/%m/%d - %H:%M:%S")
+
+        item.setToolTip(time)
 
         try:
-            widget.msgList.addItem(item)
+            if pos is None:
+                widget.msgList.takeItem(0)
+                widget.msgList.addItem(item)
+            else:
+                widget.msgList.takeItem(widget.msgList.count()-1)
+                widget.msgList.insertItem(0, item)
         except RuntimeError as e:
             print(e)
+
+    elif isinstance(received, Iterable):
+        print(received)
+        for i, message in enumerate(received, start=1):
+            item = MessageWidgetItem(uuid=message.uuid)
+            item.setToolTip(message.timestamp)
+
+            sender = message.user
+
+            if hasattr(widget, "current_font"):
+                item.setFont(widget.current_font)
+
+            if hasattr(widget, "user"):
+                if widget.user.uuid == message.user.uuid:
+                    sender = "You"
+                if str(message.user) == "$DELETED_USER":
+                    sender = "Deleted user"
+
+            if message.system_message:
+                if message.content == "Initial connection.":
+                    item.setText(f"{sender} joined.")
+                elif message.content == "User left.":
+                    item.setText(f"{sender} left")
+                else:
+                    item.setText(message.content)
+            elif not message.system_message:
+                content = message.content
+                if hasattr(widget, "toggleExplicitLanguageFilter") and widget.toggleExplicitLanguageFilter.isChecked():
+                    content = filter_content(message.content)
+                item.setText(f"{sender}: {content}")
+
+            cache.cache_to("top", message)
+            if widget.msgList.count() < 100:
+                widget.msgList.insertItem(0, item)
+        print(cache)
 
 
 def update_user_list(widget: QtWidgets.QMainWindow, recv_content: dict):
@@ -151,3 +213,17 @@ def is_valid_section_name(section):
     sect_pattern = r"^[a-zA-Z]{3,20}$"
     if not re.search(sect_pattern, section):
         raise NameError("Please ensure your theme name is 3-20 chars long, only containing A-z")
+
+
+def is_valid_anon_username(name):
+    pattern = r"^[a-zA-Z|.|_|\-|\d|]{3,10}$"
+    if not re.search(pattern, name):
+        raise NameError("Please enter a valid name.\nIt must be between 3 and 10 characters.\n\n"
+                        "It may contain the following characters:\n\na-Z 0-9 . - _")
+
+
+def is_valid_username(name):
+    pattern = r"^[a-zA-Z|.|_|\-|\d|]{3,24}$"
+    if not re.search(pattern, name):
+        raise NameError("Please enter a valid name.\nIt must be between 3 and 24 characters.\n\n"
+                        "It may contain the following characters:\n\na-Z 0-9 . - _")
