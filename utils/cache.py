@@ -25,20 +25,36 @@ class _CacheDict(Dict[str, BaseObj], dict):
 class Cache:
 
     def __init__(self, max_size=128):
+        self.__bottom = 0
         self.__cache_dict: _CacheDict = _CacheDict(max_size)
         self.__cache_list: List[str] = []
-        self.__bottom = 0
+        self._is_ready = False
 
     def __delitem__(self, key):
-        print("deleting")
         self.__cache_list.remove(key)
         del self.__cache_dict[key]
 
-    def __str__(self):
-        return ", ".join(self.__cache_list)
+    def __getitem__(self, item):
+        """
+        Yields a UUID, item pair for each BaseObj
+        in a given room.
+
+        :param item:
+        :return:
+        """
+        if isinstance(item, Room):
+            for _id in self.__cache_list:
+                cached_item = self.__cache_dict[_id]
+                if cached_item.room.uuid == item.uuid:
+                    yield cached_item.uuid, cached_item
+        else:
+            return self.__cache_dict[item]
 
     def __len__(self):
         return len(self.__cache_list)
+
+    def __str__(self):
+        return ", ".join(self.__cache_list)
 
     def __do_cache(self, obj: BaseObj, index: int):
         try:
@@ -56,6 +72,7 @@ class Cache:
 
     def __uncache_from_index(self, index: int) -> BaseObj:
         removed = self.__cache_list.pop(-(index+1 & 1))
+
         return self.__cache_dict.pop(removed)
 
     @property
@@ -80,7 +97,7 @@ class Cache:
         if side not in {"top", "bottom"}:
             raise AttributeError("You can only cache to the 'top' or 'bottom'")
         elif side == "top":
-            index -= 1
+            index = len(self)
 
         if isinstance(obj, BaseObj):
             self.__do_cache(obj, index)
@@ -111,37 +128,49 @@ class Cache:
     def is_full(self):
         return self.__top == self.__cache_dict.max_size
 
+    @property
+    def is_ready(self):
+        return self._is_ready
+
+    @is_ready.setter
+    def is_ready(self, value):
+        self._is_ready = value
+
+    def obj_at(self, pos: str, *, room=None) -> BaseObj:
+        if isinstance(room, Room):
+            objs = dict(self[room])
+            obj_uuids = [*objs.keys()]
+
+            if pos.lower() == "bottom":
+                return objs[obj_uuids[0]]
+            elif pos.lower() == "top":
+                return objs[obj_uuids[-1]]
+
+        elif pos.lower() == "bottom":
+            return self.__cache_dict[self.__cache_list[0]]
+        elif pos.lower() == "top":
+            return self.__cache_dict[self.__cache_list[-1]]
+
+        raise IndexError("Unknown position. Fetch objects from the 'top' or 'bottom' of the cache.")
+
+    def next_obj(self, *, relative: str, target, room=None):
+        if isinstance(room, Room):
+            objs = dict(self[room])
+            obj_uuids = [*objs.keys()]
+
+            if relative.lower() == "below":
+                return objs[obj_uuids[obj_uuids.index(target)-1]]
+            elif relative.lower() == "above":
+                return objs[obj_uuids[obj_uuids.index(target)+1]]
+
+        elif relative.lower() == "below":
+            return self.__cache_dict[self.__cache_list[self.__cache_list.index(target)-1]]
+        elif relative.lower() == "above":
+            return self.__cache_dict[self.__cache_list[self.__cache_list.index(target)+1]]
+
+        raise IndexError("Unknown position. Fetch objects from the 'top' or 'bottom' of the cache.")
+
     def update(self, obj: BaseObj):
         if not isinstance(obj, BaseObj):
             raise TypeError(f"{obj!r} invalid type for cache")
-        try:
-            cached_obj = self.get(obj)
-            self.__cache_dict[str(cached_obj.uuid)] = obj
-        except KeyError:
-            raise
-
-
-def main():
-
-    from uuid import uuid1
-
-    class TestObj(BaseObj):
-
-        @property
-        def uuid(self) -> UUID:
-            return uuid1()
-
-    times = {}
-
-    for i in range(10):
-        mycache = Cache(max_size=2**15)
-        start = timeit.default_timer()
-        for _ in range(2**16):
-            t = TestObj()
-            mycache.cache_to("bottom", t)
-
-        times[i] = timeit.default_timer()-start
-
-    FORMATTED = f""" AVERAGE : {sum(times.values())/len(times)}"""
-
-    print(FORMATTED)
+        self.__cache_dict[str(obj.uuid)] = obj
