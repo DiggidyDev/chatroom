@@ -162,10 +162,13 @@ class Server(QtWidgets.QMainWindow):
                 recv_content = fmt.decode_bytes(recv_bytes)
                 # print(f"RECV: {recv_content['content']} from {user.get_uuid()} - {user.nickname}")
                 if recv_content['system_message']:
-                    if recv_content['content'] == "Query":
-                        self.handle_query(recv_content, sock)
+                    if "data" in recv_content.keys():
+                        try:
+                            self.handle_query(recv_content, sock)
+                        except ConnectionAbortedError as e:
+                            print(f"[[ ERROR ]] :: {e} -- {sock} -- {self.clients}")
 
-                    elif recv_content['content'] == "Initial connection.":
+                    if recv_content['content'] == "Initial connection.":
                         sender: User = recv_content["user"]
 
                         # Reserve UUID for when initial connection message is received
@@ -192,7 +195,7 @@ class Server(QtWidgets.QMainWindow):
 
                         recv_content["SRV"] = self.user
                         recv_content["rooms"] = user_query.fetch_all_rooms_for(sender)
-                        recv_content["messages"] = msg_query.fetch_recent_messages()
+                        recv_content["messages"] = msg_query.fetch_recent_messages(amount=200)
                 else:
                     msg_query.add_message(recv_content)
 
@@ -207,7 +210,10 @@ class Server(QtWidgets.QMainWindow):
                     to_send = data.outb
                 sent = self.send_message(to_send)
                 print(f"ECHO: {to_send} to {data.addr}")
-                print(msg_cache.obj_at("top", room=to_send["room"]).timestamp)
+                try:
+                    print(msg_cache.obj_at("top", room=to_send["room"]).timestamp)
+                except Exception as e:
+                    print(e)
                 update_msg_list(self, to_send)
                 try:
                     data.outb = data.outb[sent:]  # Remove bytes from send buffer
@@ -220,15 +226,49 @@ class Server(QtWidgets.QMainWindow):
                 user_tuple = user_query.fetch_user_by(recv_content["datatype"],
                                                       recv_content["data"])
                 sock.sendall(fmt.encode_str(user_tuple))
+
             elif recv_content["get"] == "password":
                 pw_hash_tuple = user_query.fetch_pw_hash_by(recv_content["datatype"],
                                                             recv_content["data"])
                 sock.sendall(fmt.encode_str(pw_hash_tuple[0]))
 
+            elif recv_content["get"] == "messages":
+                amount = recv_content["data"][0]
+                room = recv_content["data"][1]
+
+                try:
+                    msg = recv_content["data"][2]
+                    pos = recv_content["data"][3]
+                except Exception as e:
+                    msg = pos = None
+
+                data = {
+                    "messages": msg_query.fetch_recent_messages(amount=amount,
+                                                                room=room,
+                                                                position=pos,
+                                                                msg=msg),
+                    "system_message" : True
+                }
+
+                if len(data["messages"]) == 0:
+                    data["messages"] = False
+                else:
+                    positions = {
+                        "above": "top",
+                        "below": "bottom"
+                    }
+
+                    data["messages"] = [positions[pos]] + data["messages"]
+
+                sock.send((str(len(fmt.encode_str(data))) + NULL_BYTE).encode("utf-8"))
+                sock.sendall(fmt.encode_str(data))
+
         elif "create" in recv_content.keys():
+            data = fmt.decode_bytes(recv_content["data"])
+
             if recv_content["create"] == "user":
-                if isinstance(fmt.decode_bytes(recv_content["data"]), tuple):
-                    recv_content["data"] = fmt.decode_bytes(recv_content["data"])
+                if isinstance(data, tuple):
+                    recv_content["data"] = data
                     email = recv_content["data"][0]
 
                     email_exists = user_query.does_user_email_exist(email)
@@ -247,12 +287,22 @@ class Server(QtWidgets.QMainWindow):
                     pw = recv_content["data"][2]
                     new_user = User(nickname=username,
                                     registered_user=True)
+
                     new_user.email = email
                     user_query.add_user(new_user, password=pw)
 
                     sock.sendall(fmt.encode_str(new_user))
 
                     self.mailer.send_welcome_email_to(new_user)
+                else:
+                    raise TypeError(f"Invalid type {type(data)!r} received when "
+                                    "attempting to create user, expected tuple")
+
+            elif recv_content["create"] == "room":
+                if isinstance(data, tuple):
+                    pass
+                else:
+                    raise
 
     def kick(self):
         current_user = self.userList.currentItem()
@@ -267,12 +317,14 @@ class Server(QtWidgets.QMainWindow):
             finally:
                 self.clients.remove(client)
                 self.userList.takeItem(self.userList.selectedIndexes()[0].row())
+
                 kicked_msg = fmt.content(message_content=f"{client['user']} was kicked.",
                                          user=self.user,
                                          system_message=True)
+
                 self.send_message(kicked_msg)
+
                 update_msg_list(self, kicked_msg)
-                print("done")
 
     def retranslate_ui(self):
         _translate = QtCore.QCoreApplication.translate
@@ -305,10 +357,11 @@ class Server(QtWidgets.QMainWindow):
             sent = client["conn"].send(fmt.encode_str(msg))
         elif not client:
             for c in self.clients:
-                c["conn"].send((str(len(fmt.encode_str(msg))) + NULL_BYTE).encode("utf-8"))
-                sent = c["conn"].send(fmt.encode_str(msg))
-        else:
-            print(msg, type(msg))
+                try:
+                    c["conn"].send((str(len(fmt.encode_str(msg))) + NULL_BYTE).encode("utf-8"))
+                    sent = c["conn"].send(fmt.encode_str(msg))
+                except ConnectionAbortedError:
+                    print(f"[[ ERROR ]] :: {c} -- {self.clients}")
 
         return sent
 
