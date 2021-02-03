@@ -11,6 +11,7 @@ from room import Room
 from ui.info import CustomDialog
 from ui.items import MessageWidgetItem
 from ui.menu import ThemeAction
+from ui.rooms import RoomDropdown
 from ui.themes import ThemeUpdater
 from user import User
 from utils import fmt, update
@@ -45,6 +46,7 @@ class Client(QtWidgets.QMainWindow):
     default_font: QtGui.QFont
     kicked: bool
     login: "LoginDialog"
+    msgs_received: threading.Event
     stop_event: threading.Event
     user: Union[User, None]
 
@@ -65,30 +67,16 @@ class Client(QtWidgets.QMainWindow):
         self.default_font = QtGui.QFont()
         self.default_font.setFamily("Microsoft New Tai Lue")
 
+        self.current_room = None
         self.email = None
         self.kicked = False
         self.most_recent_message: Message
+        self.msgs_received = threading.Event()
         self.user = None
 
         self._current_room: Union[Room, None]
         self._msg_cache = Cache(max_size=2 ** 10)
         self._socket = None
-
-    def _send(self, sock: socket.socket, data: Union[Message, dict]) -> None:
-        if isinstance(data, Message):
-            self._msg_cache.cache_to("bottom", data)
-            self.update_recent_message(data)
-
-            encoded = bytes(data)
-        elif isinstance(data, dict):
-            msg = Message(**data)
-            encoded = bytes(msg)
-        try:
-            sock.sendall((str(len(encoded)) + NULL_BYTE).encode("utf-8"))
-            sock.sendall(encoded)
-        except Exception as e:
-            print(e)
-            print("OH NO")
 
     def __recursive_font_change(self, parent: Union[
         QtWidgets.QMenu, QtCore.QObject]) -> None:
@@ -100,15 +88,35 @@ class Client(QtWidgets.QMainWindow):
                 if action != self.toggleCoolMode:
                     action.setFont(self.current_font)
 
+    @staticmethod
+    def _send(sock: socket.socket, data: Union[Message, dict]) -> None:
+        if isinstance(data, Message):
+            print(f"{data!r}")
+            encoded = bytes(data)
+        elif isinstance(data, dict):
+            msg = fmt.do_friendly_conversion_to(Message, data)
+            print(f"{msg!r}")
+            encoded = bytes(msg)
+        try:
+            sock.sendall((str(len(encoded)) + NULL_BYTE).encode("utf-8"))
+            sock.sendall(encoded)
+        except Exception as e:
+            print("Exception whilst sending message:", e)
+
     def __set_up_rooms(self, rooms: Iterable[Room]):
-        for room in rooms:
-            self.chatroomComboBox.addItem(room.name)
+        # TODO: LOAD LAST ROOM FROM config.ini?!
+
+        self.current_room = rooms[0]
+        self.chatroomComboBox.add_rooms(*rooms)
 
     def toggle_alternate_row_colours(self):
-        self.msgList.setAlternatingRowColors(
-            not self.msgList.alternatingRowColors())
-        self.userList.setAlternatingRowColors(
-            not self.userList.alternatingRowColors())
+        """
+        For a11y and easy differentiation of messages.
+
+        :return:
+        """
+        self.msgList.setAlternatingRowColors(not self.msgList.alternatingRowColors())
+        self.userList.setAlternatingRowColors(not self.userList.alternatingRowColors())
 
     def toggle_comic_sans(self) -> None:
         """
@@ -238,12 +246,10 @@ class Client(QtWidgets.QMainWindow):
             while not self.stop_event.is_set():
                 read_length = ""
                 recv_data = None
-                rooms = None
 
                 while recv_data not in [b"\x00", b""]:
                     recv_data = s.recv(1)
-                    read_length += recv_data.decode(
-                        "utf-8") if recv_data != b"\x00" else ""
+                    read_length += recv_data.decode("utf-8") if recv_data != b"\x00" else ""
 
                 if read_length != "":
                     recv_data = s.recv(int(read_length))
@@ -257,42 +263,66 @@ class Client(QtWidgets.QMainWindow):
                         messages = data.pop("messages", None)
 
                         if data["system_message"]:
-                            rooms = data.pop("rooms", None)
+                            content = data.pop("content", None)
+                            rooms: [] = data.pop("rooms", [])
                             srv_user = data.pop("SRV", None)
 
                             if srv_user:
                                 self.SRV_UUID = srv_user.uuid
 
-                            if data["content"] == "You have been kicked.":
+                            if content == "You have been kicked.":
                                 # Modify kicked flag for showing kicked dialog on
                                 # connection abortion
                                 self.kicked = True
                                 self.stop_event.set()
                                 self._socket.close()
                                 self.close()  # Close the current window
-                            if rooms:
-                                # The first room will always be the default, main
-                                # landing room
-                                self.current_room = rooms[0]
-                                self.__set_up_rooms(rooms)
-                            if messages:
-                                fmt.update_msg_list(self, messages,
-                                                    cache=self._msg_cache)
-                                self.current_room.most_recent_message = messages[0]
 
+                            if messages is not False:
+                                pos = "top"
+
+                                if messages[0] in {"top", "bottom"}:
+                                    pos = messages[0]
+                                    messages = messages[1:]
+
+                                fmt.update_msg_list(self, messages,
+                                                    cache=self._msg_cache,
+                                                    pos=pos)
+
+                                # Set a thread-safe flag's state
+                                # based on whether messages were
+                                # received
+                                if not self.msgs_received.is_set():
+                                    self.msgs_received.set()
+
+                            else:
+                                self.msgs_received.clear()
+
+                            if not self._msg_cache.is_ready:
                                 self._msg_cache.is_ready = True
 
-                            fmt.update_user_list(self, data)
+                            if rooms:
+                                self.__set_up_rooms(rooms)
 
-                        if rooms is None:
-                            fmt.update_msg_list(self, data, cache=self._msg_cache)
+                                for r in rooms:
+                                    try:
+                                        r.most_recent_message = list(self._msg_cache[r])[0][1]
+                                    except IndexError:
+                                        print("No messages yet")
+
+                            if "content" in data.keys() and data["content"] == "Initial connection." or \
+                                    "userlist" in data.keys():
+                                fmt.update_user_list(self, data)
+
+                        if "content" in data.keys():
+                            fmt.update_msg_list(self, data,
+                                                cache=self._msg_cache)
 
                             if str(data["user"].uuid) != self.SRV_UUID:
-                                msg = fmt.do_friendly_conversion_to(Message, data)
-                                print(msg)
+                                msg = fmt.do_friendly_conversion_to(Message,
+                                                                    data)
 
                                 self.update_recent_message(msg)
-                                print(f"{self.current_room.most_recent_message!r}")
 
     def create_anon_user(self):
         if self.login.buttonAnon.hasFocus() or self.login.inputNickname.hasFocus():
@@ -300,8 +330,7 @@ class Client(QtWidgets.QMainWindow):
                 fmt.is_valid_anon_username(
                     self.login.inputNickname.text().strip())
                 if len(self.login.inputNickname.text().strip()) > 0:
-                    self.user = User(
-                        f"[ANON] {self.login.inputNickname.text().strip()}")
+                    self.user = User(f"[ANON] {self.login.inputNickname.text().strip()}")
                     print(self.user.uuid)
                     self.login.close()
 
@@ -490,35 +519,75 @@ class Client(QtWidgets.QMainWindow):
         if x <= 2:
             for i in range(3):
                 top_msg = self.msgList.item(0)
-                if top_msg.uuid == self._msg_cache.obj_at("top", room=self.current_room).uuid:
-                    print(
-                        "ALL IS LOADED!\nrequest some more from the server, fool")
+                print(top_msg.uuid == self._msg_cache.obj_at("top", room=self.current_room).uuid)
+                if top_msg.uuid == self._msg_cache.obj_at("top",
+                                                          room=self.current_room).uuid:
+
+                    msg_query = {
+                        "content"       : "Query",
+                        "data"          : (100,
+                                           self.current_room,
+                                           self._msg_cache.get(top_msg.uuid),
+                                           "above"),
+                        "get"           : "messages",
+                        "system_message": True
+                    }
+
+                    try:
+                        self._send(self._socket, msg_query)
+
+                        if self.msgs_received.wait(0.1):
+                            self.msgList.verticalScrollBar().setSliderPosition(3)
+                        else:
+                            break
+
+                    except Exception as e:
+                        break
                 else:
                     try:
                         next_msg = self._msg_cache.next_obj(relative="above",
-                                                            target=str(top_msg.uuid),
-                                                            room=self.current_room)
-                        fmt.update_msg_list(self, dict(next_msg), cache=self._msg_cache, pos="top")
-                        self.msgList.verticalScrollBar().setSliderPosition(3)
-                    except Exception as e:
-                        print(e)
-
-        elif self.msgList.verticalScrollBar().sliderPosition() >= self.msgList.verticalScrollBar().maximum() - 2:
-            for i in range(3):
-                if self.current_room.most_recent_message.uuid == self.msgList.item(self.msgList.count()-1).uuid:
-                    print("ALL IS LOADED!\nrequest some more from the server, fool")
-                else:
-                    try:
-                        bottom_msg = self.msgList.item(self.msgList.count()-1)
-                        next_msg = self._msg_cache.next_obj(relative="below",
-                                                            target=str(bottom_msg.uuid),
+                                                            target=top_msg.uuid,
                                                             room=self.current_room)
                         fmt.update_msg_list(self, dict(next_msg),
-                                            cache=self._msg_cache)
-                        self.msgList.verticalScrollBar().setSliderPosition(
-                            self.msgList.verticalScrollBar().maximum() - 3)
+                                            cache=self._msg_cache, pos="top")
+                        self.msgList.verticalScrollBar().setSliderPosition(3)
                     except Exception as e:
+                        print("a")
                         print(e)
+
+        elif x >= self.msgList.verticalScrollBar().maximum() - 2:
+            for i in range(3):
+                
+                bottom_msg = self.msgList.item(self.msgList.count() - 1)
+
+                if self._msg_cache.obj_at("bottom", room=self.current_room).uuid == bottom_msg.uuid:
+                    msg_query = {
+                        "content"       : "Query",
+                        "data"          : (100,
+                                           self.current_room,
+                                           bottom_msg.uuid,
+                                           "below"),
+                        "get"           : "messages",
+                        "system_message": True
+                    }
+                    self._send(self._socket, msg_query)
+
+                    if self.msgs_received.wait(0.1) and len(self._msg_cache) > 200:
+                        self.msgList.verticalScrollBar().setSliderPosition(self.msgList.verticalScrollBar().maximum() - 3)
+                    else:
+                        break
+                else:
+                    try:
+                        next_msg = self._msg_cache.next_obj(
+                            relative="below",
+                            target=bottom_msg.uuid,
+                            room=self.current_room)
+
+                        fmt.update_msg_list(self, dict(next_msg),
+                                            cache=self._msg_cache)
+                        self.msgList.verticalScrollBar().setSliderPosition(self.msgList.verticalScrollBar().maximum() - 3)
+                    except Exception as e:
+                        print(type(e), e)
 
     def login_successful(self) -> bool:
         """
@@ -709,13 +778,15 @@ class Client(QtWidgets.QMainWindow):
         self.chatroomGroupBox.setSizeIncrement(QtCore.QSize(1, 1))
         self.chatroomGroupBox.setAlignment(QtCore.Qt.AlignCenter)
         self.chatroomGroupBox.setObjectName("chatroomGroupBox")
+
         self.gridLayout_4 = QtWidgets.QGridLayout(self.chatroomGroupBox)
         self.gridLayout_4.setObjectName("gridLayout_4")
-        self.chatroomComboBox = QtWidgets.QComboBox(self.chatroomGroupBox)
-        self.chatroomComboBox.setAutoFillBackground(False)
 
-        self.chatroomComboBox.setEditable(False)
-        self.chatroomComboBox.setFrame(True)
+        self.chatroomComboBox = RoomDropdown(self.chatroomGroupBox, anonymous=self.user.is_anonymous())
+        #self.chatroomComboBox.setAutoFillBackground(False)
+
+        #self.chatroomComboBox.setEditable(False)
+        #self.chatroomComboBox.setFrame(True)
         self.chatroomComboBox.setObjectName("chatroomComboBox")
 
         self.gridLayout_4.addWidget(self.chatroomComboBox, 0, 0, 1, 1)
@@ -900,8 +971,7 @@ class Client(QtWidgets.QMainWindow):
 
         self.aboutChatroom = QtWidgets.QAction(self)
         self.aboutChatroom.setObjectName("aboutChatroom")
-        self.aboutChatroom.triggered.connect(
-            lambda x=self: HelpSlots.about_chatroom(self))
+        self.aboutChatroom.triggered.connect(lambda x=self: HelpSlots.about_chatroom(self))
 
         for theme in config.get_theme_names():
             action = ThemeAction(self)
@@ -954,7 +1024,11 @@ class Client(QtWidgets.QMainWindow):
         style.to_current_theme(self)
 
     def send_message(self, content):
-        msg = Message(content=content, user=self.user, system_message=False)
+        msg = Message(content=content, room=self.current_room,
+                      user=self.user, system_message=False)
+
+        self._msg_cache.cache_to("bottom", msg)
+        self.update_recent_message(msg)
         self._send(self._socket, msg)
 
     def show(self):
@@ -965,7 +1039,7 @@ class Client(QtWidgets.QMainWindow):
         """
         ret_code = 1
 
-        if self.check_for_updates and update.is_update_available(True):
+        if self.check_for_updates and update.is_update_available(show_window=True):
             from utils.update import start_download
 
             start_download()
@@ -999,16 +1073,17 @@ class Client(QtWidgets.QMainWindow):
         :param message:
         :return:
         """
-        print("mhm")
-        print(self.current_room.most_recent_message)
+
+        if message.room.uuid == self.current_room.uuid:
+            self.current_room.most_recent_message = message
+            return
 
         try:
             for r in self.user.rooms:
                 if r.uuid == message.room.uuid:
                     r.most_recent_message = message
         except Exception as e:
-            print(e)
-        print("nice")
+            print(f"[[ ERROR ]] :: Unable to update recent message :: {e}")
 
 
 class LoginDialog(QtWidgets.QDialog):
@@ -1027,15 +1102,13 @@ class LoginDialog(QtWidgets.QDialog):
         style.to_current_theme(self)
 
     def disable_account_inputs(self):
-        if len(
-                self.inputNickname.text()) > 0 and self.inputUsername.isEnabled():
+        if len(self.inputNickname.text()) > 0 and self.inputUsername.isEnabled():
             self.inputUsername.setEnabled(False)
             self.inputPassword.setEnabled(False)
             self.inputEmail.setEnabled(False)
             self.buttonLoginRegister.setEnabled(False)
 
-        elif len(
-                self.inputNickname.text()) == 0 and not self.inputUsername.isEnabled():
+        elif len(self.inputNickname.text()) == 0 and not self.inputUsername.isEnabled():
             self.inputUsername.setEnabled(True)
             self.inputPassword.setEnabled(True)
             self.inputEmail.setEnabled(True)
@@ -1061,21 +1134,7 @@ class LoginDialog(QtWidgets.QDialog):
         self.resize(461, 238)
         self.setMinimumSize(QtCore.QSize(461, 238))
         self.setMaximumSize(QtCore.QSize(461, 238))
-        self.setStyleSheet("QPushButton, QPlainTextEdit {\n"
-                           "    background-color: rgb(56, 40, 80);\n"
-                           "    color: white;\n"
-                           "    font-weight: bold;\n"
-                           "}\n"
-                           "QPushButton::disabled {\n"
-                           "   background-color: rgb(21, 15, 30);\n"
-                           "}\n"
-                           "QLineEdit::disabled {\n"
-                           "   background-color: rgb(220, 220, 220);\n"
-                           "}\n"
-                           "#self {\n"
-                           "    background-color:#A054ED;\n"
-                           "}\n"
-                           "")
+
         self.gridLayout = QtWidgets.QGridLayout(self)
         self.gridLayout.setObjectName("gridLayout")
         self.buttonAnon = QtWidgets.QPushButton(self)
@@ -1240,7 +1299,8 @@ class MessageBox(QtWidgets.QPlainTextEdit):
                       fetching the pressed key.
         :return: None
         """
-        if len(self.toPlainText()) >= self.CHAR_LIMIT and event.key().real < 2 ** 24:
+        if len(
+                self.toPlainText()) >= self.CHAR_LIMIT and event.key().real < 2 ** 24:
             self.setPlainText(self.toPlainText()[:self.CHAR_LIMIT])
 
             return
@@ -1267,8 +1327,7 @@ class MessageBox(QtWidgets.QPlainTextEdit):
 
 class ListWidget(QtWidgets.QListWidget):
 
-    def __init__(self, parent: QtWidgets.QWidget, *, cache=None,
-                 max_items=128):
+    def __init__(self, parent: QtWidgets.QWidget, *, cache=None):
         super().__init__(parent)
         self.cache = cache
 
