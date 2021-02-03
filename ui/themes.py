@@ -196,6 +196,8 @@ class ThemeUpdater:
         menu_slctd_text_colour = cfg["menu_slctd_text_colour"]
         user_list_slctd_bg_colour = cfg["user_list_slctd_bg_colour"]
 
+
+
         # INFO: Main client CSS
         cls.setStyleSheet("QMainWindow, QDialog {\n"
                           f"    background-color: {main_bg_colour};\n"
@@ -203,10 +205,12 @@ class ThemeUpdater:
                           "QLabel, QCheckBox {\n"
                           f"    color: {text_colour}"
                           "}\n"
+                          "QAbstractItemView {\n"
+                          f"    background-color: {main_bg_colour};\n"
+                          "}\n"
                           "QWidget {\n"
                           "    outline: none;\n"
                           "}\n"
-                          "\n"
                           "QMenuBar {\n"
                           f"    background-color: {tb_bg_colour};\n"
                           f"    border-bottom: 1px solid {line_colour};\n"
@@ -261,6 +265,26 @@ class ThemeUpdater:
                           "    height: 0;\n"
                           "}")
 
+        if isinstance(cls, QtWidgets.QComboBox):
+            # INFO: Room selection CSS
+            cls.setStyleSheet("QComboBox {\n"
+                                               f"    background-color: {menu_bg_colour};\n"
+                                               f"    color: {text_colour};\n"
+                                               
+                                               # Fix this font shit another day \/ \/ \/
+                                               f"    font-family: \"Microsoft New Tai Lue\";"
+                                               f"    selection-background-color: {menu_slctd_bg_colour};\n"
+                                               f"    selection-color: {menu_slctd_text_colour}\n"
+                                               "}\n"
+                                               "\n"
+                                               "QListView {\n"
+                                               f"    background-color: {menu_bg_colour};\n"
+                                               f"    color: {text_colour};\n"
+                                               "    outline: none;\n"
+                                               f"    selection-background-color: {menu_slctd_bg_colour};\n"
+                                               f"    selection-color: {menu_slctd_text_colour};\n"
+                                               "}")
+
         if hasattr(cls, "msgList"):
             # INFO: Menubar CSS
             cls.menubar.setStyleSheet("QMenuBar::item:selected {\n"
@@ -268,6 +292,7 @@ class ThemeUpdater:
                                       f"    color: {menu_slctd_text_colour};\n"
                                       "}\n")
 
+            ~~~~~~~~ \/ \/ \/ \/
             # INFO: Buttons, containers CSS
             cls.centralwidget.setStyleSheet("\n"
                                             "QGroupBox {\n"
@@ -319,23 +344,6 @@ class ThemeUpdater:
             cls.msgListGroupBox.setStyleSheet("QWidget {\n"
                                               "    outline: none;\n"
                                               "}")
-
-            # INFO: Room selection CSS
-            cls.chatroomComboBox.setStyleSheet("QComboBox {\n"
-                                               f"    background-color: {menu_bg_colour};\n"
-                                               f"    color: {text_colour};\n"
-                                               f"    font-family: \"Microsoft New Tai Lue\";"
-                                               f"    selection-background-color: {menu_slctd_bg_colour};\n"
-                                               f"    selection-color: {menu_slctd_text_colour}\n"
-                                               "}\n"
-                                               "\n"
-                                               "QListView {\n"
-                                               f"    background-color: {menu_bg_colour};\n"
-                                               f"    color: {text_colour};\n"
-                                               "    outline: none;\n"
-                                               f"    selection-background-color: {menu_slctd_bg_colour};\n"
-                                               f"    selection-color: {menu_slctd_text_colour};\n"
-                                               "}")
 
             # INFO: User list and item CSS
             cls.userList.setStyleSheet("QListView {\n"

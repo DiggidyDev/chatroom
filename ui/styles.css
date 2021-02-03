@@ -1,0 +1,100 @@
+QAbstractItemView {
+    background-color: MAIN_BG_COLOUR;
+}
+
+
+QComboBox {
+    background-color: MENU_BG_COLOUR;
+    color: TEXT_COLOUR;
+    font-family: CURRENT_FONT;
+    selection-background-color: MENU_SLCTD_BG_COLOUR;
+    selection-color: MENU_SLCTD_TEXT_COLOUR
+}
+
+
+QLabel, QCheckBox {
+    color: TEXT_COLOUR;
+}
+
+
+QLineEdit::disabled {
+    background-color: MENU_BG_COLOUR;
+}
+
+
+QListView {
+    background-color: MENU_BG_COLOUR;
+    color: TEXT_COLOUR;
+    outline: none;
+    selection-background-color: MENU_SLCTD_BG_COLOUR;
+    selection-color: MENU_SLCTD_TEXT_COLOUR
+}
+
+
+QMenu {
+    border: 1px solid LINE_COLOUR;
+    background-color: MENU_BG_COLOUR;
+    color: TEXT_COLOUR;
+    font-family: CURRENT_FONT;
+    selection-background-color: MENU_SLCTD_BG_COLOUR;
+    selection-color: MENU_SLCTD_TEXT_COLOUR;
+}
+
+
+QMenuBar {
+    background-color: TB_BG_COLOUR;
+}
+
+
+QPlainTextEdit {
+    background-color: MSG_BOX_BG_COLOUR;
+    color: TEXT_COLOUR;
+    font-weight: bold;
+}
+
+
+QScrollBar {
+    background: rgba(0, 0, 0, 0);
+    padding: 1px;
+    width: 9px;
+}
+
+
+QScrollBar::handle {
+    background: SCROLL_BAR_COLOUR;
+    border: 1px solid SCROLL_BAR_COLOUR;
+    border-radius: 3px;
+}
+
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    height: 0;
+}
+
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: rgba(0, 0, 0, 0);
+}
+
+
+
+
+
+
+QWidget {
+    outline: none;
+}
+
+
+#self {
+    background-color: MAIN_BG_COLOUR;
+}
+
+
+#menu_bar::item:selected {
+    background-color: MENU_SLCTD_BG_COLOUR;
+    color: MENU_SLCTD_TEXT_COLOUR;
+}
+
+
+
