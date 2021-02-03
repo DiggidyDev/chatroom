@@ -81,7 +81,6 @@ def hash_pw(password: str, uuid: str) -> str:
 def update_msg_list(widget: QtWidgets.QMainWindow, received: Union[dict, Iterable[Message]], *, cache: Cache = None,
                     pos=None):
     if isinstance(received, dict):
-        print(received)
         try:
             item = MessageWidgetItem(uuid=received["message_uuid"])
         except KeyError as e:
@@ -105,13 +104,13 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: Union[dict, Iterabl
                 sender = "Deleted user"
 
         if received['system_message']:
-            print(received['content'])
             if message_content == "Initial connection.":
                 item.setText(f"{sender} joined.")
             elif message_content == "User left.":
                 item.setText(f"{sender} left.")
             else:
                 item.setText(received["content"])
+
         elif not received['system_message']:
             if hasattr(widget, "toggleExplicitLanguageFilter") and widget.toggleExplicitLanguageFilter.isChecked():
                 message_content = filter_content(message_content)
@@ -130,6 +129,9 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: Union[dict, Iterabl
             if pos is None:
                 widget.msgList.takeItem(0)
                 widget.msgList.addItem(item)
+                if not received["system_message"]:
+                    if cache:
+                        cache.cache_to("bottom", do_friendly_conversion_to(Message, received))
             else:
                 widget.msgList.takeItem(widget.msgList.count()-1)
                 widget.msgList.insertItem(0, item)
@@ -137,7 +139,6 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: Union[dict, Iterabl
             print(e)
 
     elif isinstance(received, Iterable):
-        print(received)
         for i, message in enumerate(received, start=1):
             item = MessageWidgetItem(uuid=message.uuid)
             item.setToolTip(message.timestamp)
@@ -162,36 +163,43 @@ def update_msg_list(widget: QtWidgets.QMainWindow, received: Union[dict, Iterabl
                     item.setText(message.content)
             elif not message.system_message:
                 content = message.content
+
                 if hasattr(widget, "toggleExplicitLanguageFilter") and widget.toggleExplicitLanguageFilter.isChecked():
                     content = filter_content(message.content)
+
                 item.setText(f"{sender}: {content}")
 
-            cache.cache_to("top", message)
+            if pos:
+                cache.cache_to(pos, message)
+            else:
+                cache.cache_to("top", message)
+
             if widget.msgList.count() < 100:
                 widget.msgList.insertItem(0, item)
-        print(cache)
 
 
 def update_user_list(widget: QtWidgets.QMainWindow, recv_content: dict):
     endings = {" was kicked.", " left."}
 
-    if recv_content["content"] == "Initial connection.":
-        new_user = recv_content["user"]
-        server_user_list: list = recv_content["userlist"]
+    new_user = recv_content["user"]
+    server_user_list: list = recv_content.pop("userlist", [])
 
-        if new_user.name == widget.user.name:
-            for user in server_user_list:
-                user_item = QtWidgets.QListWidgetItem()
-                user_item.setText(user)
-                widget.userList.addItem(user_item)
-        else:
+    if new_user.name == widget.user.name:
+        for user in server_user_list:
             user_item = QtWidgets.QListWidgetItem()
-
-            if hasattr(widget, "current_font"):
-                user_item.setFont(widget.current_font)
-
-            user_item.setText(new_user.name)
+            user_item.setText(user)
             widget.userList.addItem(user_item)
+    else:
+        user_item = QtWidgets.QListWidgetItem()
+
+        if hasattr(widget, "current_font"):
+            user_item.setFont(widget.current_font)
+
+        user_item.setText(new_user.name)
+        widget.userList.addItem(user_item)
+
+    if "content" not in recv_content.keys():
+        return
 
     for ending in endings:
         if recv_content["content"].endswith(ending):
