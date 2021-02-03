@@ -34,14 +34,44 @@ class MessageQuery(BaseQuery):
                                        message.system_message))
         self.conn.commit()
 
-    def fetch_recent_messages(self, *, amount=100, room: Room = None):
+    def fetch_recent_messages(self, *, amount=200, room: Room = None, position=None, msg: Message = None):
         if room is None:
             room = self.room_query.main_room
 
-        self.cursor.execute(f"""SELECT message_uuid FROM messages WHERE room = ? ORDER BY _id DESC LIMIT {amount}""",
-                            (str(room.uuid),))
-        r = self.cursor.fetchall()
-        msgs = [self.fetch_message_by_uuid(u[0]) for u in r]
+        if hasattr(room, "uuid"):
+            room_uuid = str(room.uuid)
+        else:
+            room_uuid = room
+
+        if msg is None:
+            self.cursor.execute(f"""SELECT message_uuid FROM messages WHERE room = ? ORDER BY _id DESC LIMIT {amount}""",
+                                (room_uuid,))
+            r = self.cursor.fetchall()
+            msgs = [self.fetch_message_by_uuid(u[0]) for u in r]
+
+        else:
+            if hasattr(msg, "uuid"):
+                msg_uuid = str(msg.uuid)
+            else:
+                msg_uuid = msg
+
+            if position == "above":
+                self.cursor.execute(
+                    f"""SELECT message_uuid FROM messages WHERE _id < (SELECT _id FROM messages WHERE\
+                    message_uuid = ? and room = ?) ORDER BY _id DESC LIMIT {amount}""",
+                    (msg_uuid, room_uuid)
+                )
+            elif position == "below":
+                self.cursor.execute(
+                    f"""SELECT message_uuid FROM messages WHERE _id > (SELECT _id FROM messages WHERE\
+                     message_uuid = ? and room = ?) ORDER BY _id ASC LIMIT {amount}""",
+                    (msg_uuid, room_uuid)
+                )
+            else:
+                raise TypeError("Please only use \"above\" or \"below\"")
+
+            r = self.cursor.fetchall()
+            msgs = [self.fetch_message_by_uuid(u[0]) for u in r]
 
         return msgs
 
