@@ -19,7 +19,7 @@ except ImportError:
     DL_TYPE = "zip"
 
 
-def is_update_available(show_window: bool = False) -> bool:
+def is_update_available(*, show_window: bool = False) -> bool:
     """
     Using the queried version from the website, this checks
     whether the current client's version is up-to-date. If
